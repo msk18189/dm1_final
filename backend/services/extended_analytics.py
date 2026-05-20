@@ -400,8 +400,10 @@ def _filters_from_params(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> PRFilterParams:
-    return PRFilterParams(days=days, author=author, state=state)
+    return PRFilterParams(days=days, author=author, state=state, start_date=start_date, end_date=end_date)
 
 
 class ExtendedAnalytics:
@@ -415,8 +417,10 @@ class ExtendedAnalytics:
         days: Optional[int] = None,
         author: Optional[str] = None,
         state: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        filters = _filters_from_params(days, author, state)
+        filters = _filters_from_params(days, author, state, start_date, end_date)
         prs = get_filtered_prs(self.db, repo_id, filters)
         now = ensure_utc(datetime.utcnow())
 
@@ -751,14 +755,16 @@ class ExtendedAnalytics:
         days: Optional[int] = None,
         author: Optional[str] = None,
         state: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> str:
         repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
         if not repo:
             raise ValueError("Repository not found")
 
-        kpi = self.get_kpi_with_duration(repo_id, days, author, state)
-        contributors = self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state)
-        oldest = self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state)
+        kpi = self.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
+        contributors = self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
+        oldest = self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
         stale = self.get_stale_recommendations(repo_id)
         risks = self.get_pr_risk_panel(repo_id, limit=20)
 
@@ -807,6 +813,8 @@ class ExtendedAnalytics:
         days: Optional[int] = None,
         author: Optional[str] = None,
         state: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> bytes:
         """PDF mirrors dashboard page layout (KPIs, alerts, charts, tables). No filter/input UI."""
         try:
@@ -830,21 +838,21 @@ class ExtendedAnalytics:
             raise ValueError("Repository not found")
 
         # Same data + filters as the dashboard (filters affect metrics, not shown in PDF)
-        kpi = self.get_kpi_with_duration(repo_id, days, author, state)
+        kpi = self.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
         monthly = self.get_monthly_flow_filtered(
-            repo_id, months=6, days=days, author=author, state=state
+            repo_id, months=6, days=days, author=author, state=state, start_date=start_date, end_date=end_date
         )
         throughput = self.get_throughput_filtered(
-            repo_id, weeks=8, days=days, author=author, state=state
+            repo_id, weeks=8, days=days, author=author, state=state, start_date=start_date, end_date=end_date
         )
         contributors = self.get_contributors_filtered(
-            repo_id, limit=15, days=days, author=author, state=state
+            repo_id, limit=15, days=days, author=author, state=state, start_date=start_date, end_date=end_date
         )
         oldest = self.get_oldest_open_filtered(
-            repo_id, limit=10, days=days, author=author, state=state
+            repo_id, limit=10, days=days, author=author, state=state, start_date=start_date, end_date=end_date
         )
         slowest = self.get_slowest_merged_filtered(
-            repo_id, limit=10, days=days, author=author, state=state
+            repo_id, limit=10, days=days, author=author, state=state, start_date=start_date, end_date=end_date
         )
         stale = self.get_stale_recommendations(repo_id)
         risks = self.get_pr_risk_panel(repo_id, limit=15)

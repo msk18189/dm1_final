@@ -9,7 +9,6 @@ import DataTable from '@/components/DataTable'
 import DashboardFilters, { DashboardFiltersState } from '@/components/DashboardFilters'
 import PRRiskPanel from '@/components/PRRiskPanel'
 import StalePRAlerts from '@/components/StalePRAlerts'
-import CompareRepos from '@/components/CompareRepos'
 import ExportButton from '@/components/ExportButton'
 import MergeRateDonut from '@/components/MergeRateDonut'
 import {
@@ -393,10 +392,6 @@ export default function Home() {
               ]}
               data={data.contributors}
             />
-          </section>
-
-          <section id="section-compare" className="scroll-mt-8">
-            <CompareRepos defaultUrl={repoUrl} githubToken={githubToken} />
           </section>
         </>
       )}

@@ -21,6 +21,135 @@ class CompareRequest(BaseModel):
     url_b: str
     github_token: Optional[str] = None
 
+@router.post("/api/verify-repo")
+def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
+    """Verify repository accessibility and fetch basic metadata"""
+    try:
+        from services.data_processor import parse_github_repo_url, normalize_github_url
+        from github.client import GitHubClient
+        import os
+
+        url = request.url.strip()
+        owner, repo_name = parse_github_repo_url(url)
+        
+        user_token = (request.github_token or "").strip() or None
+        token_source = 'none'
+        if user_token:
+            token_source = 'user'
+        elif os.getenv("GITHUB_TOKEN"):
+            token_source = 'env'
+
+        # Initialize client with user token or fallback env token
+        client = GitHubClient(token=user_token)
+        
+        result = client.verify_repository_access(owner, repo_name)
+        canonical_url = normalize_github_url(result["owner"], result["repo"])
+        
+        return {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            
+            "ok": True,
+            "owner": result["owner"],
+            "repo": result["repo"],
+            "is_private": result["is_private"],
+            "url": canonical_url,
+            "has_token": (user_token is not None or os.getenv("GITHUB_TOKEN") is not None),
+            "token_source": token_source
+        }
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error verifying repository: {error_msg}")
+        
+        if "Bad credentials" in error_msg:
+            raise HTTPException(
+                status_code=400, 
+                detail="GitHub token is invalid or expired."
+            )
+        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg:
+            raise HTTPException(
+                status_code=400, 
+                detail="Repository not found. Make sure URL is correct and you have permission."
+            )
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+@router.get("/api/repositories")
+def get_repositories(db: Session = Depends(get_db)):
+    """List all analyzed repositories"""
+    from database.models import Repository, PullRequest
+    try:
+        repos = db.query(Repository).all()
+        res = []
+        for r in repos:
+            open_prs = db.query(PullRequest).filter(
+                PullRequest.repo_id == r.id,
+                PullRequest.state == "OPEN"
+            ).count()
+            res.append({
+                "id": r.id,
+                "owner": r.owner,
+                "name": r.name,
+                "url": r.url,
+                "open_prs": open_prs
+            })
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/api/analyze")
 def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
     """Analyze a GitHub repository"""
@@ -76,11 +205,13 @@ def get_kpi(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get KPI summary for a repository"""
     ext = ExtendedAnalytics(db)
-    return ext.get_kpi_with_duration(repo_id, days, author, state)
+    return ext.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
 
 @router.get("/api/oldest-prs/{repo_id}")
 def get_oldest_prs(
@@ -88,11 +219,13 @@ def get_oldest_prs(
     limit: int = 10,
     days: Optional[int] = None,
     author: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get oldest open PRs"""
     ext = ExtendedAnalytics(db)
-    return ext.get_oldest_open_filtered(repo_id, limit, days=days, author=author)
+    return ext.get_oldest_open_filtered(repo_id, limit, days=days, author=author, start_date=start_date, end_date=end_date)
 
 @router.get("/api/slowest-prs/{repo_id}")
 def get_slowest_prs(
@@ -100,11 +233,13 @@ def get_slowest_prs(
     limit: int = 10,
     days: Optional[int] = None,
     author: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get slowest merged PRs"""
     ext = ExtendedAnalytics(db)
-    return ext.get_slowest_merged_filtered(repo_id, limit, days=days, author=author)
+    return ext.get_slowest_merged_filtered(repo_id, limit, days=days, author=author, start_date=start_date, end_date=end_date)
 
 @router.get("/api/contributor-activity/{repo_id}")
 def get_contributor_activity(
@@ -112,11 +247,13 @@ def get_contributor_activity(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get contributor activity"""
     ext = ExtendedAnalytics(db)
-    return ext.get_contributors_filtered(repo_id, days=days, author=author, state=state)
+    return ext.get_contributors_filtered(repo_id, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
 
 @router.get("/api/monthly-flow/{repo_id}")
 def get_monthly_flow(
@@ -125,11 +262,13 @@ def get_monthly_flow(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get monthly PR flow"""
     ext = ExtendedAnalytics(db)
-    return ext.get_monthly_flow_filtered(repo_id, months, days=days, author=author, state=state)
+    return ext.get_monthly_flow_filtered(repo_id, months, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
 
 @router.get("/api/throughput/{repo_id}")
 def get_throughput(
@@ -138,11 +277,13 @@ def get_throughput(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Get PR throughput"""
     ext = ExtendedAnalytics(db)
-    return ext.get_throughput_filtered(repo_id, weeks, days=days, author=author, state=state)
+    return ext.get_throughput_filtered(repo_id, weeks, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
 
 @router.get("/api/authors/{repo_id}")
 def get_authors(repo_id: int, db: Session = Depends(get_db)):
@@ -187,12 +328,14 @@ def export_report(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Export dashboard data as CSV"""
     try:
         ext = ExtendedAnalytics(db)
-        csv_content = ext.build_export_csv(repo_id, days, author, state)
+        csv_content = ext.build_export_csv(repo_id, days, author, state, start_date, end_date)
         return StreamingResponse(
             io.StringIO(csv_content),
             media_type="text/csv",
@@ -208,12 +351,14 @@ def export_report_pdf(
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Export dashboard data as PDF"""
     try:
         ext = ExtendedAnalytics(db)
-        pdf_bytes = ext.build_export_pdf(repo_id, days, author, state)
+        pdf_bytes = ext.build_export_pdf(repo_id, days, author, state, start_date, end_date)
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",

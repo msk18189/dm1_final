@@ -16,6 +16,8 @@ function filterParams(filters?: DashboardFiltersState) {
   if (filters.days) params.days = filters.days
   if (filters.author && filters.author !== 'all') params.author = filters.author
   if (filters.state && filters.state !== 'ALL') params.state = filters.state
+  if (filters.startDate) params.start_date = filters.startDate
+  if (filters.endDate) params.end_date = filters.endDate
   return params
 }
 

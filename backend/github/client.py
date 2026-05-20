@@ -64,6 +64,35 @@ class GitHubClient:
             print(f"GitHub Client: Error: {str(e)}")
             raise
     
+    def verify_repository_access(self, owner: str, repo: str) -> Dict[str, Any]:
+        """Verify repository access and check if it is private"""
+        query = """
+        query($owner: String!, $repo: String!) {
+            repository(owner: $owner, name: $repo) {
+                isPrivate
+                name
+                owner {
+                    login
+                }
+            }
+        }
+        """
+        variables = {"owner": owner, "repo": repo}
+        try:
+            data = self.query(query, variables)
+            repo_data = data.get("repository")
+            if not repo_data:
+                raise Exception("Could not resolve to a Repository.")
+            return {
+                "ok": True,
+                "is_private": repo_data.get("isPrivate", False),
+                "owner": repo_data.get("owner", {}).get("login", owner),
+                "repo": repo_data.get("name", repo)
+            }
+        except Exception as e:
+            print(f"GitHub Client: Error verifying repository: {str(e)}")
+            raise
+
     def fetch_pull_requests(self, owner: str, repo: str, first: int = 50) -> List[Dict]:
         """Fetch PRs with reviews and commits - simplified query"""
         query = """

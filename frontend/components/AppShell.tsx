@@ -18,7 +18,6 @@ export type NavSection =
   | 'insights'
   | 'charts'
   | 'tables'
-  | 'compare'
 
 interface NavItem {
   id: NavSection
@@ -32,7 +31,6 @@ const NAV: NavItem[] = [
   { id: 'insights', label: 'Insights', icon: <Brain className="h-4 w-4" />, requiresData: true },
   { id: 'charts', label: 'Charts', icon: <BarChart3 className="h-4 w-4" />, requiresData: true },
   { id: 'tables', label: 'Tables', icon: <Table2 className="h-4 w-4" />, requiresData: true },
-  { id: 'compare', label: 'Compare', icon: <GitCompare className="h-4 w-4" />, requiresData: true },
 ]
 
 interface AppShellProps {
@@ -61,13 +59,13 @@ export default function AppShell({
   if (!hasData) {
     return (
       <div className="landing-center">
-        <div className="w-full max-w-[420px]">
-          <div className="landing-hero-title">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-palette-emerald-light">
-              <GitBranch className="h-6 w-6 text-palette-emerald" />
+        <div className="w-full max-w-5xl px-4 sm:px-6 lg:px-8">
+          <div className="landing-hero-title mb-10 space-y-4">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-3xl bg-palette-emerald-light shadow-sm">
+              <GitBranch className="h-8 w-8 text-palette-emerald" />
             </div>
-            <h1 className="text-2xl font-bold text-midnight-50">PRISM</h1>
-            <p className="mt-1 text-sm text-midnight-400">GitHub PR Intelligence</p>
+            <h1 className="text-4xl font-extrabold tracking-tight text-midnight-50 sm:text-5xl">PRISM</h1>
+            <p className="mx-auto mt-2 max-w-xl text-base text-midnight-400 sm:text-lg">GitHub PR Intelligence</p>
           </div>
           {children}
         </div>

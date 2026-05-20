@@ -23,9 +23,9 @@ def reprocess_all_repos():
             
             try:
                 result = processor.process_repository(full_url)
-                print(f"✓ Successfully reprocessed {repo.owner}/{repo.name}")
+                print(f"[OK] Successfully reprocessed {repo.owner}/{repo.name}")
             except Exception as e:
-                print(f"✗ Error reprocessing {repo.owner}/{repo.name}: {str(e)}")
+                print(f"[ERROR] Error reprocessing {repo.owner}/{repo.name}: {str(e)}")
         
         print(f"\n{'='*60}")
         print("All repositories have been reprocessed!")

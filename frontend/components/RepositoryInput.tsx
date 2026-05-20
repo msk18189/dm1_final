@@ -70,7 +70,7 @@ export default function RepositoryInput({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       onSubmit={handleSubmit}
-      className={isHero ? 'p-6 sm:p-7' : 'card card-hover'}
+      className={isHero ? 'p-12 sm:p-16 lg:p-24' : 'card card-hover'}
     >
       {!isHero && (
         <div className="mb-5 flex items-center gap-3">
@@ -85,14 +85,14 @@ export default function RepositoryInput({
       )}
 
       {isHero && (
-        <div className="mb-5 text-center">
-          <h2 className="text-lg font-bold text-midnight-50">Analyze repository</h2>
-          <p className="mt-1 text-sm text-midnight-400">Paste a GitHub URL to get started</p>
+        <div className="mb-8 text-center space-y-2">
+          <h2 className="text-2xl font-bold tracking-tight text-midnight-50 sm:text-3xl">Analyze repository</h2>
+          <p className="text-base text-midnight-400">Paste a GitHub URL to start the repository analytics workflow</p>
         </div>
       )}
 
-      <div className={`mb-4 flex gap-2.5 rounded-xl border border-warm-200 bg-warm-50 p-3 ${isHero ? '' : 'border-palette-amber/20 bg-palette-amber-light/50'}`}>
-        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-palette-amber" />
+      <div className={`mb-6 flex gap-3 rounded-2xl border border-warm-200 bg-warm-50 p-4 ${isHero ? 'border-palette-amber/20 bg-palette-amber-light/30' : 'border-palette-amber/20 bg-palette-amber-light/50'}`}>
+        <Lock className="mt-0.5 h-5 w-5 shrink-0 text-palette-amber" />
         <p className="text-xs leading-relaxed text-midnight-300 sm:text-sm">
           Private repos need a{' '}
           <a
@@ -107,13 +107,13 @@ export default function RepositoryInput({
         </p>
       </div>
 
-      <div className="space-y-3.5">
+      <div className={isHero ? 'space-y-6 sm:space-y-8' : 'space-y-4'}>
         <div>
-          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-midnight-400">
+          <label className={`mb-2 block font-semibold uppercase tracking-wider text-midnight-400 ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
             Repository URL
           </label>
           <div className="relative">
-            <Github className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-midnight-400" />
+            <Github className={`absolute top-1/2 -translate-y-1/2 text-midnight-400 ${isHero ? 'h-6 w-6 left-5' : 'h-4 w-4 left-3.5'}`} />
             <input
               type="text"
               value={url}
@@ -123,15 +123,16 @@ export default function RepositoryInput({
                 setVerifyOk(false)
               }}
               placeholder="github.com/owner/repo"
-              className="input-field pl-10 text-sm"
+              className={`input-field ${isHero ? 'h-14 pr-5 !rounded-2xl text-lg' : 'pr-4 text-sm'}`}
+              style={{ paddingLeft: isHero ? '4rem' : '3rem' }}
               disabled={isLoading}
             />
           </div>
         </div>
 
         <div>
-          <label className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-midnight-400">
-            <KeyRound className="h-3 w-3" />
+          <label className={`mb-2 flex items-center gap-1.5 font-semibold uppercase tracking-wider text-midnight-400 ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
+            <KeyRound className={isHero ? 'h-4 w-4' : 'h-3 w-3'} />
             Token <span className="normal-case font-normal text-midnight-500">(optional)</span>
           </label>
           <input
@@ -144,42 +145,42 @@ export default function RepositoryInput({
               setVerifyOk(false)
             }}
             placeholder="ghp_…"
-            className="input-field font-mono text-sm"
+            className={`input-field font-mono ${isHero ? 'h-14 px-5 !rounded-2xl text-lg' : 'text-sm'}`}
             disabled={isLoading}
           />
         </div>
 
         {verifyMessage && (
           <p
-            className={`text-xs font-medium sm:text-sm ${verifyOk ? 'text-palette-emerald' : 'text-palette-amber'}`}
+            className={`font-medium ${isHero ? 'text-base' : 'text-xs'} ${verifyOk ? 'text-palette-emerald' : 'text-palette-amber'}`}
             role="status"
           >
             {verifyMessage}
           </p>
         )}
 
-        <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+        <div className="flex flex-col gap-4 pt-2 sm:flex-row">
           <button
             type="button"
             onClick={handleVerify}
             disabled={isLoading || verifying || !url.trim()}
-            className="btn-secondary flex items-center justify-center gap-2 text-sm sm:flex-none sm:px-5"
+            className={`btn-secondary flex items-center justify-center gap-2.5 sm:flex-none transition-all duration-300 ${isHero ? 'text-lg h-14 px-8 !rounded-2xl' : 'text-sm sm:px-5'}`}
           >
-            {verifying ? <Loader className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            Test
+            {verifying ? <Loader className={isHero ? 'h-6 w-6 animate-spin' : 'h-4 w-4 animate-spin'} /> : <ShieldCheck className={isHero ? 'h-6 w-6' : 'h-4 w-4'} />}
+            <span>Test</span>
           </button>
           <button
             type="submit"
             disabled={isLoading || !url.trim()}
-            className="btn-primary flex flex-1 items-center justify-center gap-2 text-sm"
+            className={`btn-primary flex flex-1 items-center justify-center gap-2.5 transition-all duration-300 ${isHero ? 'text-lg h-14 !rounded-2xl font-bold shadow-lg hover:shadow-xl' : 'text-sm'}`}
           >
             {isLoading ? (
               <>
-                <Loader className="h-4 w-4 animate-spin" />
-                Analyzing…
+                <Loader className={isHero ? 'h-6 w-6 animate-spin' : 'h-4 w-4 animate-spin'} />
+                <span>Analyzing…</span>
               </>
             ) : (
-              'Run analysis'
+              <span>Run analysis</span>
             )}
           </button>
         </div>

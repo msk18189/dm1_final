@@ -67,27 +67,27 @@ body {
 }
 
 .landing-glow-wrap {
-  @apply relative mx-auto w-full max-w-[420px];
+  @apply relative mx-auto w-full max-w-5xl;
 }
 
 .landing-glow-wrap::before {
   content: '';
   position: absolute;
-  inset: -24px;
-  border-radius: 1.75rem;
+  inset: -40px;
+  border-radius: 2.5rem;
   background: radial-gradient(
     ellipse at center,
-    rgba(198, 123, 92, 0.35) 0%,
-    rgba(122, 158, 135, 0.2) 50%,
+    rgba(198, 123, 92, 0.25) 0%,
+    rgba(122, 158, 135, 0.15) 50%,
     transparent 75%
   );
-  filter: blur(18px);
+  filter: blur(32px);
   z-index: 0;
   pointer-events: none;
 }
 
 .landing-glow-box {
-  @apply relative z-10 overflow-hidden rounded-[24px] border border-warm-200 bg-white shadow-glow-landing;
+  @apply relative z-10 overflow-hidden rounded-[32px] border border-white/60 bg-white/80 shadow-2xl backdrop-blur-md;
 }
 
 .landing-hero-title {
