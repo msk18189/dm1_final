@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from database.db import get_db
+from database.database import get_db
 from services.data_processor import DataProcessor
 from services.analytics import AnalyticsService
 from services.extended_analytics import ExtendedAnalytics

@@ -1,7 +1,8 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from database.models import PullRequest, Repository, Contributor, MLPrediction
+from database.models import PullRequest, Repository, Contributor, MLPrediction, TotalAnalysis
 from github.client import GitHubClient
 import numpy as np
 
@@ -20,6 +21,11 @@ def parse_github_repo_url(repo_url: str) -> tuple[str, str]:
             "Invalid GitHub URL. Use https://github.com/owner/repo or owner/repo"
         )
     return parts[0], parts[1]
+
+
+def normalize_github_url(owner: str, repo_name: str) -> str:
+    """Return a canonical GitHub repository URL for the repo."""
+    return f"https://github.com/{owner}/{repo_name}"
 
 
 class DataProcessor:
@@ -52,17 +58,44 @@ class DataProcessor:
             print(f"[1/6] Processing repository: {owner}/{repo_name}")
             
             # Check if repo exists in DB
+            canonical_url = normalize_github_url(owner, repo_name)
             repo = self.db.query(Repository).filter(
                 Repository.owner == owner,
                 Repository.name == repo_name
             ).first()
             
             if not repo:
-                repo = Repository(owner=owner, name=repo_name, url=repo_url)
+                full_name = f"{owner}/{repo_name}"
+                repo = Repository(
+                    owner=owner,
+                    name=repo_name,
+                    full_name=full_name,
+                    url=canonical_url,
+                    source_url=repo_url,
+                    stars=0,
+                    last_synced=datetime.utcnow(),
+                )
                 self.db.add(repo)
-                self.db.commit()
-                print(f"[2/6] Created new repository record: {repo.id}")
+                try:
+                    self.db.commit()
+                    print(f"[2/6] Created new repository record: {repo.id}")
+                except IntegrityError:
+                    self.db.rollback()
+                    repo = self.db.query(Repository).filter(
+                        Repository.full_name == full_name
+                    ).first()
+                    if not repo:
+                        raise
+                    repo.url = canonical_url
+                    repo.source_url = repo.source_url or repo_url
+                    repo.last_synced = datetime.utcnow()
+                    self.db.commit()
+                    print(f"[2/6] Recovered existing repository record: {repo.id}")
             else:
+                repo.full_name = repo.full_name or f"{owner}/{repo_name}"
+                repo.url = canonical_url
+                repo.source_url = repo_url
+                repo.last_synced = datetime.utcnow()
                 print(f"[2/6] Using existing repository record: {repo.id}")
             
             # Fetch PR data from GitHub (user token overrides env for this run)
@@ -79,6 +112,7 @@ class DataProcessor:
                 if existing_count > 0:
                     print(f"[INFO] No new PRs from API; using {existing_count} cached PRs")
                     self._update_contributor_stats(repo.id)
+                    self._update_total_analysis(repo)
                     self.db.commit()
                     return {
                         "owner": owner,
@@ -105,6 +139,8 @@ class DataProcessor:
                     ).first()
                     
                     if existing_pr:
+                        existing_pr.repo_owner = owner
+                        existing_pr.repo_name = repo_name
                         existing_pr.title = parsed_pr["title"][:200]
                         existing_pr.state = parsed_pr["state"]
                         existing_pr.merged_at = parsed_pr["merged_at"]
@@ -121,6 +157,8 @@ class DataProcessor:
                     else:
                         pr = PullRequest(
                             repo_id=repo.id,
+                            repo_owner=owner,
+                            repo_name=repo_name,
                             pr_number=parsed_pr["number"],
                             title=parsed_pr["title"][:200],
                             state=parsed_pr["state"],
@@ -155,7 +193,8 @@ class DataProcessor:
             
             # Update contributor stats
             print(f"[5/6] Updating contributor statistics...")
-            self._update_contributor_stats(repo.id)
+            self._update_contributor_stats(repo.id, repo)
+            self._update_total_analysis(repo)
             
             self.db.commit()
             
@@ -172,6 +211,75 @@ class DataProcessor:
             self.db.rollback()
             raise
     
+    def _update_total_analysis(self, repo: Repository):
+        """Store or update aggregated analysis metrics for the repository."""
+        prs = self.db.query(PullRequest).filter(PullRequest.repo_id == repo.id).all()
+        total_prs = len(prs)
+        open_prs = sum(1 for pr in prs if pr.state == "OPEN")
+        merged_prs = sum(1 for pr in prs if pr.state == "MERGED")
+        closed_prs = sum(1 for pr in prs if pr.state in ("MERGED", "CLOSED"))
+
+        cycle_times = [pr.cycle_time_days for pr in prs if pr.cycle_time_days is not None]
+        avg_cycle_time = round(sum(cycle_times) / len(cycle_times), 2) if cycle_times else 0.0
+
+        review_durations = [pr.review_duration_hours for pr in prs if pr.review_duration_hours is not None]
+        avg_review_duration = (
+            round(sum(review_durations) / len(review_durations) / 24, 2)
+            if review_durations
+            else 0.0
+        )
+
+        wait_hours = [pr.wait_for_review_hours for pr in prs if pr.wait_for_review_hours is not None]
+        avg_wait_for_review = (
+            round(sum(wait_hours) / len(wait_hours) / 24, 2)
+            if wait_hours
+            else 0.0
+        )
+
+        merge_rate = round((merged_prs / closed_prs * 100) if closed_prs else 0, 2)
+
+        now = datetime.now(timezone.utc)
+        stale_pr_count = 0
+        for pr in prs:
+            if pr.state == "OPEN" and pr.created_at:
+                created = pr.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                stale_pr_count += 1 if (now - created).days > 30 else 0
+
+        analysis = self.db.query(TotalAnalysis).filter(
+            TotalAnalysis.repo_id == repo.id
+        ).first()
+
+        if analysis:
+            analysis.repo_owner = repo.owner
+            analysis.repo_name = repo.name
+            analysis.total_prs = total_prs
+            analysis.open_prs = open_prs
+            analysis.merged_prs = merged_prs
+            analysis.closed_prs = closed_prs
+            analysis.avg_cycle_time = avg_cycle_time
+            analysis.merge_rate = merge_rate
+            analysis.avg_review_duration = avg_review_duration
+            analysis.avg_wait_for_review = avg_wait_for_review
+            analysis.stale_pr_count = stale_pr_count
+        else:
+            analysis = TotalAnalysis(
+                repo_id=repo.id,
+                repo_owner=repo.owner,
+                repo_name=repo.name,
+                total_prs=total_prs,
+                open_prs=open_prs,
+                merged_prs=merged_prs,
+                closed_prs=closed_prs,
+                avg_cycle_time=avg_cycle_time,
+                merge_rate=merge_rate,
+                avg_review_duration=avg_review_duration,
+                avg_wait_for_review=avg_wait_for_review,
+                stale_pr_count=stale_pr_count,
+            )
+            self.db.add(analysis)
+
     def _generate_predictions_safe(self, pr: PullRequest, parsed_pr: Dict):
         """Generate ML predictions safely - won't crash if ML fails"""
         try:
@@ -244,6 +352,8 @@ class DataProcessor:
                 # Store predictions
                 prediction = MLPrediction(
                     pr_id=pr.id,
+                    repo_owner=pr.repo_owner,
+                    repo_name=pr.repo_name,
                     predicted_delay_days=predicted_delay,
                     bottleneck_probability=bottleneck_prob,
                     risk_score=risk_score,
@@ -260,9 +370,16 @@ class DataProcessor:
             print(f"[ML ERROR] Error generating predictions: {str(e)}")
             # Don't crash - continue processing
     
-    def _update_contributor_stats(self, repo_id: int):
+    def _update_contributor_stats(self, repo_id: int, repo: Repository = None):
         """Update contributor statistics"""
         try:
+            # Get repository if not provided
+            if not repo:
+                repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+                if not repo:
+                    print(f"[WARN] Repository {repo_id} not found for contributor stats")
+                    return
+            
             now = datetime.now(timezone.utc)
             
             prs = self.db.query(PullRequest).filter(
@@ -318,6 +435,8 @@ class DataProcessor:
                     avg_review = np.mean(stats["review_times"]) if stats["review_times"] else 0.0
                     
                     if contributor:
+                        contributor.repo_owner = repo.owner
+                        contributor.repo_name = repo.name
                         contributor.total_prs = stats["total_prs"]
                         contributor.merged_prs = stats["merged_prs"]
                         contributor.avg_cycle_time = float(avg_cycle)
@@ -326,6 +445,8 @@ class DataProcessor:
                     else:
                         contributor = Contributor(
                             repo_id=repo_id,
+                            repo_owner=repo.owner,
+                            repo_name=repo.name,
                             username=username[:100],
                             total_prs=stats["total_prs"],
                             merged_prs=stats["merged_prs"],

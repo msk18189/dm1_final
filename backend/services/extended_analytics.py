@@ -28,11 +28,25 @@ def _pdf_safe(text: Any) -> str:
     return s.encode("latin-1", errors="replace").decode("latin-1")
 
 
+def _pdf_reset_cursor(pdf) -> None:
+    """Align all content to the left margin."""
+    pdf.set_x(pdf.l_margin)
+
+
+def _pdf_normalize_widths(total: float, ratios: List[float]) -> List[float]:
+    """Column widths that sum exactly to total (avoids table drift)."""
+    if not ratios:
+        return []
+    widths = [round(total * r, 2) for r in ratios[:-1]]
+    widths.append(round(total - sum(widths), 2))
+    return widths
+
+
 def _pdf_paragraph(pdf, width: float, line_height: float, text: str) -> None:
-    """Write wrapped text that always continues from the left margin (fixes clipping / stray columns)."""
+    """Write wrapped text from the left margin."""
     from fpdf.enums import XPos, YPos
 
-    pdf.set_x(pdf.l_margin)
+    _pdf_reset_cursor(pdf)
     pdf.multi_cell(
         width,
         line_height,
@@ -40,13 +54,346 @@ def _pdf_paragraph(pdf, width: float, line_height: float, text: str) -> None:
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
     )
+    _pdf_reset_cursor(pdf)
 
 
-def _pdf_heading(pdf, title: str, size: int = 12) -> None:
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "B", size)
-    _pdf_paragraph(pdf, pdf.epw, 7, title)
+def _pdf_section(pdf, title: str, subtitle: str = "") -> None:
+    """Full-width section heading — same left edge as tables and charts."""
+    from fpdf.enums import XPos, YPos
+
+    _pdf_ensure_space(pdf, 14)
+    _pdf_reset_cursor(pdf)
+    pdf.ln(5)
+
+    pdf.set_fill_color(241, 245, 249)
+    pdf.set_draw_color(148, 163, 184)
+    pdf.set_text_color(30, 41, 59)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(
+        pdf.epw,
+        8,
+        _pdf_safe(title),
+        border="B",
+        fill=True,
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+
+    if subtitle:
+        _pdf_reset_cursor(pdf)
+        pdf.set_font("Helvetica", size=7)
+        pdf.set_text_color(100, 116, 139)
+        pdf.multi_cell(
+            pdf.epw,
+            4,
+            _pdf_safe(subtitle),
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", size=8)
+    _pdf_reset_cursor(pdf)
+    pdf.ln(3)
+
+
+def _pdf_truncate(text: Any, max_len: int) -> str:
+    s = _pdf_safe(text)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 3] + "..."
+
+
+def _pdf_ensure_space(pdf, needed_mm: float) -> None:
+    """Start a new page if there is not enough vertical space."""
+    if pdf.get_y() + needed_mm > pdf.h - pdf.b_margin:
+        pdf.add_page()
+
+
+def _pdf_draw_table(
+    pdf,
+    headers: List[str],
+    rows: List[List[Any]],
+    col_widths: List[float],
+    row_height: float = 6,
+) -> None:
+    """Draw a bordered table aligned to the left margin."""
+    if not headers:
+        return
+
+    x0 = pdf.l_margin
+    widths = col_widths
+    if abs(sum(widths) - pdf.epw) > 0.1:
+        widths = _pdf_normalize_widths(
+            pdf.epw, [w / sum(col_widths) for w in col_widths]
+        )
+
+    def draw_row(cells: List[str], header: bool = False) -> None:
+        _pdf_ensure_space(pdf, row_height + 2)
+        y0 = pdf.get_y()
+        if header:
+            pdf.set_fill_color(55, 65, 81)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 8)
+        else:
+            pdf.set_fill_color(248, 250, 252)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", size=7)
+
+        x = x0
+        for i, cell in enumerate(cells):
+            cw = widths[i] if i < len(widths) else widths[-1]
+            pdf.set_xy(x, y0)
+            pdf.cell(cw, row_height, cell, border=1, fill=True, align="L")
+            x += cw
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(x0, y0 + row_height)
+
+    draw_row([_pdf_safe(h) for h in headers], header=True)
+    for row in rows:
+        cells = [_pdf_truncate(c, 80) for c in row]
+        while len(cells) < len(headers):
+            cells.append("")
+        draw_row(cells[: len(headers)])
+
+    _pdf_reset_cursor(pdf)
+    pdf.ln(4)
+
+
+def _pdf_add_chart_image(
+    pdf,
+    fig,
+    width_mm: float | None = None,
+    max_height_mm: float = 115,
+) -> None:
+    """Embed chart PNG in PDF preserving aspect ratio (no stretch/squash)."""
+    import matplotlib.pyplot as plt
+    from PIL import Image
+
+    buf = io.BytesIO()
+    fig.savefig(
+        buf,
+        format="png",
+        dpi=150,
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+        pad_inches=0.25,
+    )
+    plt.close(fig)
+    buf.seek(0)
+
+    with Image.open(buf) as im:
+        px_w, px_h = im.size
+    buf.seek(0)
+
+    target_w = width_mm or pdf.epw
+    target_h = target_w * (px_h / px_w)
+
+    if target_h > max_height_mm:
+        target_h = max_height_mm
+        target_w = target_h * (px_w / px_h)
+
+    _pdf_ensure_space(pdf, target_h + 6)
+    _pdf_reset_cursor(pdf)
+    y0 = pdf.get_y()
+    pdf.image(buf, x=pdf.l_margin, y=y0, w=target_w, h=target_h)
+    pdf.set_y(y0 + target_h + 6)
+    _pdf_reset_cursor(pdf)
+
+
+def _pdf_chart_layout(fig, *, left: float = 0.12, bottom: float = 0.14) -> None:
+    """Consistent margins so labels and legends are not clipped."""
+    fig.subplots_adjust(left=left, right=0.97, top=0.90, bottom=bottom)
+
+
+def _pdf_duration_str(display: Any, fallback_days: float = 0) -> str:
+    """Match dashboard duration display (value + unit)."""
+    if isinstance(display, dict):
+        return f"{display.get('value', 0)} {display.get('unit', '')}".strip()
+    if fallback_days:
+        d = format_duration(fallback_days * 24)
+        return f"{d['value']} {d['unit']}"
+    return "0 hrs"
+
+
+def _pdf_short_date(iso: Optional[str]) -> str:
+    if not iso:
+        return "-"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.strftime("%b %d, %y")
+    except (ValueError, TypeError):
+        return "-"
+
+
+def _pdf_chart_monthly_flow(monthly: List[Dict[str, Any]]):
+    """Monthly PR Flow — grouped vertical bars."""
+    import matplotlib.pyplot as plt
+
+    if not monthly:
+        return None
+
+    labels = [str(r.get("month", "")) for r in monthly]
+    created = [r.get("created", 0) for r in monthly]
+    merged = [r.get("merged", 0) for r in monthly]
+    closed = [r.get("closed", 0) for r in monthly]
+
+    x = list(range(len(labels)))
+    bar_w = 0.24
+    fig, ax = plt.subplots(figsize=(7.0, 3.4))
+    ax.bar([i - bar_w for i in x], created, bar_w, label="Created", color="#667eea")
+    ax.bar(x, merged, bar_w, label="Merged", color="#10b981")
+    ax.bar([i + bar_w for i in x], closed, bar_w, label="Closed (unmerged)", color="#ef4444")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=28, ha="right", fontsize=8)
+    ax.set_ylabel("PR count", fontsize=9)
+    ax.legend(fontsize=8, loc="upper right", framealpha=0.9)
+    ax.grid(axis="y", alpha=0.25, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _pdf_chart_layout(fig, bottom=0.22)
+    return fig
+
+
+def _pdf_chart_throughput(throughput: List[Dict[str, Any]]):
+    """PR Throughput (Weekly) — line chart."""
+    import matplotlib.pyplot as plt
+
+    if not throughput:
+        return None
+
+    labels = [str(r.get("week", "")) for r in throughput]
+    values = [r.get("prs", 0) for r in throughput]
+    x = list(range(len(labels)))
+
+    fig, ax = plt.subplots(figsize=(7.0, 3.2))
+    ax.plot(x, values, marker="o", color="#667eea", linewidth=2, markersize=5)
+    ax.fill_between(x, values, alpha=0.12, color="#667eea")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=32, ha="right", fontsize=7)
+    ax.set_ylabel("Merged PRs", fontsize=9)
+    ax.grid(axis="y", alpha=0.25, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _pdf_chart_layout(fig, bottom=0.24)
+    return fig
+
+
+def _pdf_chart_contributors(contributors: List[Dict[str, Any]]):
+    """Contributor Activity — horizontal grouped bars (dashboard style)."""
+    import matplotlib.pyplot as plt
+
+    if not contributors:
+        return None
+
+    sorted_c = sorted(contributors, key=lambda c: c.get("total_prs", 0), reverse=True)
+    labels = [(c.get("username") or "unknown")[:18] for c in sorted_c]
+    total = [c.get("total_prs", 0) for c in sorted_c]
+    merged = [c.get("merged_prs", 0) for c in sorted_c]
+
+    n = len(labels)
+    fig_h = max(4.5, n * 0.48 + 2.2)
+    fig, ax = plt.subplots(figsize=(7.0, fig_h))
+    y = list(range(n))
+    bar_h = 0.34
+    ax.barh([i - bar_h / 2 for i in y], total, height=bar_h, label="Total PRs", color="#667eea")
+    ax.barh([i + bar_h / 2 for i in y], merged, height=bar_h, label="Merged", color="#10b981")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlabel("PR count", fontsize=9)
+    xmax = max(total + [1])
+    ax.set_xlim(0, xmax * 1.08)
+    ax.legend(
+        fontsize=8,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.04),
+        ncol=2,
+        frameon=False,
+    )
+    ax.grid(axis="x", alpha=0.25, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _pdf_chart_layout(fig, left=0.22, bottom=0.12)
+    return fig
+
+
+def _pdf_chart_review_turnaround(contributors: List[Dict[str, Any]]):
+    """Review Turnaround — horizontal bars colored by wait time."""
+    import matplotlib.pyplot as plt
+
+    items = [
+        {
+            "username": c.get("username", ""),
+            "hours": (c.get("avg_wait_for_review") or 0) * 24,
+        }
+        for c in contributors
+        if c.get("username")
+    ]
+    if not items:
+        return None
+
+    items.sort(key=lambda x: x["hours"], reverse=True)
+    labels = [i["username"][:18] for i in items]
+    hours = [i["hours"] for i in items]
+    colors = [
+        "#16a34a" if h < 24 else "#ca8a04" if h < 48 else "#dc2626"
+        for h in hours
+    ]
+
+    n = len(labels)
+    fig_h = max(4.5, n * 0.48 + 2.0)
+    fig, ax = plt.subplots(figsize=(7.0, fig_h))
+    y = list(range(n))
+    ax.barh(y, hours, height=0.55, color=colors)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlabel("Avg wait (hours)", fontsize=9)
+    xmax = max(hours + [1])
+    ax.set_xlim(0, xmax * 1.08)
+    ax.grid(axis="x", alpha=0.25, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _pdf_chart_layout(fig, left=0.22, bottom=0.10)
+    return fig
+
+
+def _pdf_stale_alerts_section(pdf, stale: List[Dict[str, Any]], w: float) -> None:
+    """Stale PR Alerts & Recommendations — same layout as dashboard cards."""
+    _pdf_section(pdf, "Stale PR Alerts & Recommendations")
+    if not stale:
+        _pdf_paragraph(pdf, w, 5, "No PRs need attention right now.")
+        return
+
+    for alert in stale:
+        _pdf_ensure_space(pdf, 28)
+        _pdf_reset_cursor(pdf)
+        pdf.set_font("Helvetica", "B", 9)
+        title = f"#{alert.get('number')} - {alert.get('title', '')}"
+        _pdf_paragraph(pdf, w, 5, title)
+        pdf.set_font("Helvetica", size=7)
+        meta = (
+            f"{alert.get('author', '')} | {alert.get('age_days', 0)} days open | "
+            f"{alert.get('severity', '')} priority"
+        )
+        _pdf_paragraph(pdf, w, 4, meta)
+
+        reasons = alert.get("reasons") or []
+        actions = alert.get("recommended_actions") or []
+        pdf.set_font("Helvetica", "B", 7)
+        _pdf_paragraph(pdf, w, 4, "Why flagged")
+        pdf.set_font("Helvetica", size=7)
+        for r in reasons:
+            _pdf_paragraph(pdf, w, 4, f"  - {r}")
+        pdf.set_font("Helvetica", "B", 7)
+        _pdf_paragraph(pdf, w, 4, "Recommended actions")
+        pdf.set_font("Helvetica", size=7)
+        for a in actions:
+            _pdf_paragraph(pdf, w, 4, f"  > {a}")
+        pdf.ln(3)
 
 
 def _filters_from_params(
@@ -461,7 +808,7 @@ class ExtendedAnalytics:
         author: Optional[str] = None,
         state: Optional[str] = None,
     ) -> bytes:
-        """Build PDF report (requires fpdf2). Includes full analysis sections."""
+        """PDF mirrors dashboard page layout (KPIs, alerts, charts, tables). No filter/input UI."""
         try:
             from fpdf import FPDF
         except ImportError as e:
@@ -469,10 +816,20 @@ class ExtendedAnalytics:
                 "PDF export requires fpdf2. Install with: pip install fpdf2"
             ) from e
 
+        try:
+            import matplotlib  # noqa: F401
+
+            matplotlib.use("Agg")
+        except ImportError as e:
+            raise ValueError(
+                "PDF charts require matplotlib. Install with: pip install matplotlib"
+            ) from e
+
         repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
         if not repo:
             raise ValueError("Repository not found")
 
+        # Same data + filters as the dashboard (filters affect metrics, not shown in PDF)
         kpi = self.get_kpi_with_duration(repo_id, days, author, state)
         monthly = self.get_monthly_flow_filtered(
             repo_id, months=6, days=days, author=author, state=state
@@ -481,20 +838,16 @@ class ExtendedAnalytics:
             repo_id, weeks=8, days=days, author=author, state=state
         )
         contributors = self.get_contributors_filtered(
-            repo_id, limit=100, days=days, author=author, state=state
+            repo_id, limit=15, days=days, author=author, state=state
         )
         oldest = self.get_oldest_open_filtered(
-            repo_id, limit=50, days=days, author=author, state=state
+            repo_id, limit=10, days=days, author=author, state=state
         )
         slowest = self.get_slowest_merged_filtered(
-            repo_id, limit=30, days=days, author=author, state=state
+            repo_id, limit=10, days=days, author=author, state=state
         )
         stale = self.get_stale_recommendations(repo_id)
-        risks = self.get_pr_risk_panel(repo_id, limit=200)
-
-        total_prs = self.db.query(PullRequest).filter(
-            PullRequest.repo_id == repo_id
-        ).count()
+        risks = self.get_pr_risk_panel(repo_id, limit=15)
 
         pdf = FPDF()
         pdf.set_margins(12, 12, 12)
@@ -502,127 +855,239 @@ class ExtendedAnalytics:
         pdf.add_page()
         w = pdf.epw
 
-        pdf.set_font("Helvetica", "B", 15)
-        _pdf_paragraph(pdf, w, 8, "GitHub PR Intelligence Report")
+        # --- Report header ---
+        from fpdf.enums import XPos, YPos
+
+        _pdf_reset_cursor(pdf)
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.set_text_color(30, 41, 59)
+        pdf.cell(
+            w,
+            10,
+            "PR Intelligence Dashboard",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        pdf.set_font("Helvetica", size=9)
+        pdf.set_text_color(100, 116, 139)
+        _pdf_paragraph(pdf, w, 5, "Analyze GitHub repository health and PR metrics")
         pdf.set_font("Helvetica", size=10)
+        pdf.set_text_color(0, 0, 0)
         _pdf_paragraph(pdf, w, 5, f"Repository: {repo.owner}/{repo.name}")
-        _pdf_paragraph(pdf, w, 5, f"Generated (UTC): {datetime.now(timezone.utc).isoformat()}")
-        if days or (author and author != "all") or (state and state != "ALL"):
-            filt = f"Filters: days={days or 'all'} author={author or 'all'} state={state or 'ALL'}"
-            _pdf_paragraph(pdf, w, 5, filt)
-        _pdf_paragraph(pdf, w, 5, f"Total PRs in database for this repo: {total_prs}")
+        _pdf_paragraph(
+            pdf,
+            w,
+            5,
+            f"Report generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        )
+        pdf.ln(4)
 
-        _pdf_heading(pdf, "KPI Summary", 11)
-        kpi_order = [
-            "open_prs",
-            "stale_prs",
-            "avg_cycle_time",
-            "median_cycle_time",
-            "avg_wait_for_review",
-            "avg_review_duration",
-            "merge_rate",
-            "avg_reviews_per_pr",
+        # --- 1. KPI summary ---
+        _pdf_section(pdf, "Key metrics")
+        kpi_cards = [
+            ("Open PRs", kpi.get("open_prs", 0), "currently open"),
+            ("Stale Open (>30D)", kpi.get("stale_prs", 0), "need attention"),
+            (
+                "Avg Cycle Time",
+                _pdf_duration_str(
+                    kpi.get("avg_cycle_time_display"), kpi.get("avg_cycle_time", 0)
+                ),
+                "",
+            ),
+            (
+                "Median Cycle Time",
+                _pdf_duration_str(
+                    kpi.get("median_cycle_time_display"), kpi.get("median_cycle_time", 0)
+                ),
+                "",
+            ),
+            (
+                "Avg Wait for Review",
+                _pdf_duration_str(
+                    kpi.get("avg_wait_for_review_display"),
+                    kpi.get("avg_wait_for_review", 0),
+                ),
+                "",
+            ),
+            (
+                "Avg Review Duration",
+                _pdf_duration_str(
+                    kpi.get("avg_review_duration_display"),
+                    kpi.get("avg_review_duration", 0),
+                ),
+                "",
+            ),
+            ("Merge Rate", kpi.get("merge_rate", 0), "%"),
+            ("Avg Reviews / PR", kpi.get("avg_reviews_per_pr", 0), ""),
         ]
-        shown: set[str] = set()
-        for key in kpi_order:
-            if key in kpi:
-                _pdf_paragraph(pdf, w, 4, f"{key}: {kpi[key]}")
-                shown.add(key)
-        for key, val in sorted(kpi.items()):
-            if key in shown or key.endswith("_display"):
-                continue
-            _pdf_paragraph(pdf, w, 4, f"{key}: {val}")
-            shown.add(key)
-        for key, val in kpi.items():
-            if key.endswith("_display") and isinstance(val, dict):
-                _pdf_paragraph(
-                    pdf,
-                    w,
-                    4,
-                    f"{key}: {val.get('value')} {val.get('unit', '')}",
-                )
+        _pdf_draw_table(
+            pdf,
+            ["Metric", "Value", "Unit / note"],
+            [[t, v, u] for t, v, u in kpi_cards],
+            col_widths=_pdf_normalize_widths(w, [0.42, 0.28, 0.30]),
+        )
 
-        _pdf_heading(pdf, "Monthly PR flow (last 6 months)", 11)
-        for row in monthly:
-            m = row.get("month", "")
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"{m} | created={row.get('created', 0)} merged={row.get('merged', 0)} closed={row.get('closed', 0)}",
-            )
+        # --- 2. Stale PR Alerts & Recommendations ---
+        _pdf_stale_alerts_section(pdf, stale, w)
 
-        _pdf_heading(pdf, "Weekly throughput (merged PRs)", 11)
-        for row in throughput:
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"{row.get('week', '')}: {row.get('prs', 0)} merged",
-            )
-
-        _pdf_heading(pdf, f"Contributors ({len(contributors)} listed)", 11)
-        for c in contributors:
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"{c.get('username', '')} | total={c.get('total_prs')} merged={c.get('merged_prs')} "
-                f"open={c.get('open_prs', 0)} merge%={c.get('merge_rate')} stale={c.get('stale_pr_count', 0)}",
-            )
-
-        _pdf_heading(pdf, f"Stale PR alerts ({len(stale)})", 11)
-        if not stale:
-            _pdf_paragraph(pdf, w, 4, "(none)")
-        for s in stale:
-            reasons = "; ".join(s.get("reasons", []) or [])
-            actions = "; ".join(s.get("recommended_actions", []) or [])
-            title = (s.get("title") or "")[:120]
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"#{s.get('number')} [{s.get('severity')}] age={s.get('age_days')}d | {title}",
-            )
-            _pdf_paragraph(pdf, w, 4, f"   Reasons: {reasons}")
-            _pdf_paragraph(pdf, w, 4, f"   Actions: {actions}")
-
-        _pdf_heading(pdf, f"PR risk & delay — open PRs ({len(risks)})", 11)
+        # --- 3. PR Risk & Delay Predictions ---
+        _pdf_section(pdf, "PR Risk & Delay Predictions")
         if not risks:
-            _pdf_paragraph(pdf, w, 4, "(no open PRs)")
-        for r in risks:
-            title = (r.get("title") or "")[:120]
-            delay = r.get("predicted_delay_days")
-            delay_s = f"{delay}d" if delay is not None else "n/a"
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"#{r.get('number')} risk={r.get('risk_score')}% bottleneck={r.get('bottleneck_probability')}% "
-                f"est_delay={delay_s} est_review_h={r.get('predicted_review_wait_hours')}",
+            _pdf_paragraph(pdf, w, 5, "No open PRs with ML predictions yet.")
+        else:
+            note = risks[0].get("_panel_note") or (
+                "Rule-based risk estimates from PR age, reviews, and size."
+                if risks[0].get("score_source") == "heuristic"
+                else "ML-powered risk scores for open PRs."
             )
-            _pdf_paragraph(pdf, w, 4, f"   {title} | author={r.get('author')}")
+            pdf.set_font("Helvetica", size=7)
+            _pdf_paragraph(pdf, w, 4, note)
+            _pdf_draw_table(
+                pdf,
+                ["#", "Title", "Author", "Risk", "Bottleneck", "Est. delay", "Est. review wait"],
+                [
+                    [
+                        r.get("number", ""),
+                        r.get("title", ""),
+                        r.get("author", ""),
+                        f"{r.get('risk_score', 0)}%",
+                        f"{r.get('bottleneck_probability', 0)}%",
+                        _pdf_duration_str(
+                            r.get("predicted_delay_display"),
+                            r.get("predicted_delay_days") or 0,
+                        )
+                        if r.get("predicted_delay_days") is not None
+                        or r.get("predicted_delay_display")
+                        else "-",
+                        (
+                            f"{r.get('predicted_review_wait_hours')} hrs"
+                            if r.get("predicted_review_wait_hours") is not None
+                            else "-"
+                        ),
+                    ]
+                    for r in risks
+                ],
+                col_widths=_pdf_normalize_widths(
+                    w, [0.06, 0.28, 0.14, 0.09, 0.11, 0.14, 0.18]
+                ),
+                row_height=7,
+            )
 
-        _pdf_heading(pdf, f"Oldest open PRs ({len(oldest)})", 11)
-        for o in oldest:
-            title = (o.get("title") or "")[:120]
-            _pdf_paragraph(
-                pdf,
-                w,
-                4,
-                f"#{o.get('number')} age={o.get('age_days')}d reviews={o.get('review_count')} | {title}",
-            )
+        # --- 4. Monthly PR Flow chart ---
+        _pdf_section(
+            pdf,
+            "Monthly PR Flow",
+            "Created, merged, and closed counts by month (when each event happened)",
+        )
+        flow_fig = _pdf_chart_monthly_flow(monthly)
+        if flow_fig:
+            _pdf_add_chart_image(pdf, flow_fig, max_height_mm=72)
+        else:
+            _pdf_paragraph(pdf, w, 5, "No PR activity in the selected period.")
 
-        _pdf_heading(pdf, f"Slowest merged PRs ({len(slowest)})", 11)
-        for s in slowest:
-            title = (s.get("title") or "")[:120]
-            ctd = s.get("cycle_time_days")
-            _pdf_paragraph(
+        # --- 5. PR Throughput (Weekly) chart ---
+        _pdf_section(
+            pdf,
+            "PR Throughput (Weekly)",
+            "Merged PRs per week (ISO week, Mon-Sun)",
+        )
+        tp_fig = _pdf_chart_throughput(throughput)
+        if tp_fig:
+            _pdf_add_chart_image(pdf, tp_fig, max_height_mm=68)
+        else:
+            _pdf_paragraph(pdf, w, 5, "No merged PRs in the last 8 weeks.")
+
+        # --- 6. Contributor Activity chart ---
+        _pdf_section(
+            pdf,
+            "Contributor Activity",
+            "Top contributors by PRs opened vs merged (from fetched pull requests)",
+        )
+        contrib_fig = _pdf_chart_contributors(contributors)
+        if contrib_fig:
+            _pdf_add_chart_image(pdf, contrib_fig, max_height_mm=155)
+        else:
+            _pdf_paragraph(pdf, w, 5, "No contributor data yet.")
+
+        # --- 7. Review Turnaround chart ---
+        _pdf_section(
+            pdf,
+            "Review Turnaround - Avg Wait for First Review",
+            "Green <24h | Yellow 24-48h | Red >48h",
+        )
+        rt_fig = _pdf_chart_review_turnaround(contributors)
+        if rt_fig:
+            _pdf_add_chart_image(pdf, rt_fig, max_height_mm=155)
+
+        # --- 8. Oldest Open PRs table ---
+        _pdf_section(pdf, "Oldest Open PRs")
+        if oldest:
+            _pdf_draw_table(
                 pdf,
-                w,
-                4,
-                f"#{s.get('number')} cycle~{ctd}d | files={s.get('files_changed')} | {title}",
+                ["#", "Title", "Age (days)", "Author", "Created"],
+                [
+                    [
+                        o.get("number", ""),
+                        o.get("title", ""),
+                        o.get("age_days", 0),
+                        o.get("author", ""),
+                        _pdf_short_date(o.get("created_at")),
+                    ]
+                    for o in oldest
+                ],
+                col_widths=_pdf_normalize_widths(w, [0.07, 0.40, 0.12, 0.18, 0.23]),
+                row_height=7,
             )
+        else:
+            _pdf_paragraph(pdf, w, 5, "No open pull requests.")
+
+        # --- 9. Slowest Merged PRs table ---
+        _pdf_section(pdf, "Slowest Merged PRs")
+        if slowest:
+            _pdf_draw_table(
+                pdf,
+                ["#", "Title", "Cycle Time", "Author", "Merged"],
+                [
+                    [
+                        s.get("number", ""),
+                        s.get("title", ""),
+                        _pdf_duration_str(
+                            s.get("cycle_time_display"), s.get("cycle_time_days", 0)
+                        ),
+                        s.get("author", ""),
+                        _pdf_short_date(s.get("merged_at")),
+                    ]
+                    for s in slowest
+                ],
+                col_widths=_pdf_normalize_widths(w, [0.07, 0.38, 0.15, 0.18, 0.22]),
+                row_height=7,
+            )
+        else:
+            _pdf_paragraph(pdf, w, 5, "No merged pull requests.")
+
+        # --- 10. Contributor Activity table ---
+        _pdf_section(pdf, "Contributor Activity (summary table)")
+        if contributors:
+            _pdf_draw_table(
+                pdf,
+                ["Username", "Total PRs", "Merged", "Avg Cycle Time", "Merge Rate (%)"],
+                [
+                    [
+                        c.get("username", ""),
+                        c.get("total_prs", 0),
+                        c.get("merged_prs", 0),
+                        _pdf_duration_str(
+                            c.get("avg_cycle_time_display"), c.get("avg_cycle_time", 0)
+                        ),
+                        c.get("merge_rate", 0),
+                    ]
+                    for c in contributors
+                ],
+                col_widths=_pdf_normalize_widths(w, [0.22, 0.14, 0.12, 0.28, 0.24]),
+                row_height=7,
+            )
+        else:
+            _pdf_paragraph(pdf, w, 5, "No contributor data.")
 
         out = pdf.output()
         return bytes(out) if isinstance(out, (bytes, bytearray)) else str(out).encode("latin-1")
