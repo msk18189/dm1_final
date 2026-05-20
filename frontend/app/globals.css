@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #faf6f0;
+  --text-heading: #2c2620;
+  --text-body: #5c4f44;
+  --text-muted: #a89888;
+  --c-sage: #7a9e87;
+  --c-terracotta: #c67b5c;
+  --c-amber: #d4a054;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-base);
+  color: var(--text-body);
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #7a9e87 0%, #c67b5c 50%, #d4a054 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-heading {
+  @apply font-semibold text-midnight-50;
+}
+
+.text-body {
+  @apply text-midnight-200;
+}
+
+.text-muted {
+  @apply text-midnight-400;
+}
+
+.card {
+  @apply rounded-card border border-warm-200 bg-white p-6 shadow-card;
+}
+
+.card-hover {
+  @apply transition-all duration-300 hover:border-palette-orange/30 hover:shadow-glow;
+}
+
+.card-glow {
+  @apply relative overflow-hidden;
+}
+
+/* Landing — centered analyze box with warm glow */
+.landing-center {
+  @apply flex min-h-screen w-full items-center justify-center bg-warm-50 bg-mesh p-4 sm:p-8;
+}
+
+.landing-glow-wrap {
+  @apply relative mx-auto w-full max-w-[420px];
+}
+
+.landing-glow-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -24px;
+  border-radius: 1.75rem;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(198, 123, 92, 0.35) 0%,
+    rgba(122, 158, 135, 0.2) 50%,
+    transparent 75%
+  );
+  filter: blur(18px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.landing-glow-box {
+  @apply relative z-10 overflow-hidden rounded-[24px] border border-warm-200 bg-white shadow-glow-landing;
+}
+
+.landing-hero-title {
+  @apply mb-6 text-center;
+}
+
+.input-field {
+  @apply w-full rounded-xl border border-warm-200 bg-warm-50 px-4 py-2.5 text-midnight-100
+    placeholder-midnight-400 transition focus:border-palette-orange focus:outline-none focus:ring-1 focus:ring-palette-orange/25;
+}
+
+.btn-primary {
+  @apply rounded-xl bg-palette-orange px-5 py-2.5 font-medium text-white transition-all duration-200
+    hover:bg-palette-orange-dark hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-secondary {
+  @apply rounded-xl border border-warm-200 bg-white px-5 py-2.5 font-medium text-midnight-100 transition-all duration-200
+    hover:border-palette-emerald hover:bg-palette-emerald-light;
+}
+
+.btn-ghost {
+  @apply rounded-lg px-4 py-2 text-sm text-midnight-300 transition hover:bg-warm-100 hover:text-midnight-50;
+}
+
+.section-title {
+  @apply text-lg font-semibold tracking-tight text-midnight-50;
+}
+
+.section-subtitle {
+  @apply mt-0.5 text-xs text-midnight-400;
+}
+
+.page-heading {
+  @apply text-2xl font-bold tracking-tight text-midnight-50 sm:text-3xl;
+}
+
+.page-subheading {
+  @apply mt-1 max-w-xl text-sm text-midnight-300;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f3ede4;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #c67b5c, #7a9e87);
+  border-radius: 3px;
+}
