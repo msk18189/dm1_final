@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from database.database import init_db
-from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD
+from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD, API_WORKERS
 import os
 import sys
 
@@ -42,4 +42,13 @@ def root():
 if __name__ == "__main__":
     import uvicorn
     print(f"Starting server on {API_HOST}:{API_PORT}")
-    uvicorn.run("main:app", host=API_HOST, port=API_PORT, reload=API_RELOAD)
+    uvicorn.run(
+        "main:app",
+        host=API_HOST,
+        port=API_PORT,
+        reload=API_RELOAD,
+        workers=API_WORKERS,
+        loop="asyncio",
+        limit_concurrency=100,
+        limit_max_requests=1000,
+    )

@@ -20,9 +20,10 @@ ML_CONTAMINATION = 0.1  # For Isolation Forest
 ML_KMEANS_CLUSTERS = 3
 
 # API
-API_HOST = "0.0.0.0"
+API_HOST = "127.0.0.1"
 API_PORT = 8000
-API_RELOAD = True
+API_RELOAD = False
+API_WORKERS = 1
 
 # CORS — Next.js may use any port 3000–3019 when lower ports are busy
 CORS_ORIGINS = [

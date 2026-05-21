@@ -1,8 +1,9 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { AlertTriangle, Lightbulb } from 'lucide-react'
+import { AlertTriangle, Lightbulb, ChevronDown } from 'lucide-react'
 import { severityColor } from '@/lib/format'
+import { useRef, useState, useEffect } from 'react'
 
 interface StaleAlert {
   number: number
@@ -15,6 +16,35 @@ interface StaleAlert {
 }
 
 export default function StalePRAlerts({ data }: { data: StaleAlert[] }) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [canScroll, setCanScroll] = useState(false)
+
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ top: 200, behavior: 'smooth' })
+    }
+  }
+
+  const checkScroll = () => {
+    if (scrollContainerRef.current) {
+      const { scrollHeight, clientHeight, scrollTop } = scrollContainerRef.current
+      setCanScroll(scrollHeight > clientHeight && scrollTop + clientHeight < scrollHeight)
+    }
+  }
+
+  useEffect(() => {
+    checkScroll()
+    const container = scrollContainerRef.current
+    if (container) {
+      container.addEventListener('scroll', checkScroll)
+      window.addEventListener('resize', checkScroll)
+      return () => {
+        container.removeEventListener('scroll', checkScroll)
+        window.removeEventListener('resize', checkScroll)
+      }
+    }
+  }, [data])
+
   if (!data?.length) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full">
@@ -33,7 +63,10 @@ export default function StalePRAlerts({ data }: { data: StaleAlert[] }) {
         <AlertTriangle className="h-5 w-5 text-palette-amber" />
         <h3 className="section-title">Stale PR Alerts</h3>
       </div>
-      <div className="space-y-4 overflow-y-auto max-h-[260px] pr-2 scrollbar-thin">
+      <div 
+        ref={scrollContainerRef}
+        className="space-y-4 flex-1 overflow-y-auto pr-2 scrollbar-thin"
+      >
         {data.map((alert) => (
           <div
             key={alert.number}
@@ -72,6 +105,15 @@ export default function StalePRAlerts({ data }: { data: StaleAlert[] }) {
           </div>
         ))}
       </div>
+      {canScroll && (
+        <button
+          onClick={handleScroll}
+          className="mt-4 flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-palette-orange/10 hover:bg-palette-orange/20 text-palette-orange font-semibold transition"
+        >
+          <ChevronDown className="h-4 w-4" />
+          Scroll to more
+        </button>
+      )}
     </motion.div>
   )
 }

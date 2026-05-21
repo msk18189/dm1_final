@@ -38,6 +38,7 @@ interface AppShellProps {
   hasData: boolean
   repoLabel?: string
   headerActions?: React.ReactNode
+  userLabel?: string
   activeSection?: NavSection
   onNavigate?: (section: NavSection) => void
 }
@@ -47,6 +48,7 @@ export default function AppShell({
   hasData,
   repoLabel,
   headerActions,
+  userLabel,
   activeSection = 'analyze',
   onNavigate,
 }: AppShellProps) {
@@ -137,14 +139,11 @@ export default function AppShell({
               </span>
             )}
           </div>
-
-          <div className="mx-auto hidden max-w-md flex-1 sm:block">
-            <div className="flex items-center gap-2 rounded-2xl border border-warm-200 bg-warm-50 px-4 py-2.5">
-              <Search className="h-4 w-4 text-midnight-400" />
-              <span className="text-sm text-midnight-400">Search metrics, PRs, authors…</span>
-            </div>
+        {userLabel && (
+          <div className="ml-4 hidden items-center rounded-2xl border border-warm-200 bg-warm-50 px-3 py-1.5 text-sm text-midnight-500 sm:flex">
+            <span className="font-semibold text-midnight-700">{userLabel}</span>
           </div>
-
+        )}
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"

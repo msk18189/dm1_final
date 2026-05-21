@@ -17,7 +17,6 @@ from services.filters import (
 )
 from services.analytics import AnalyticsService, _ensure_utc, _iso_week_key, _month_key
 from services.analytics import _month_range, _format_month_label, _week_range, _week_label
-from services.risk_heuristics import scores_for_open_pr
 
 
 def _pdf_safe(text: Any) -> str:
@@ -622,7 +621,6 @@ class ExtendedAnalytics:
         )
         now = ensure_utc(datetime.utcnow())
         results = []
-        uses_heuristic = False
         for pr in open_prs:
             pred = (
                 self.db.query(MLPrediction)
@@ -630,28 +628,43 @@ class ExtendedAnalytics:
                 .order_by(MLPrediction.created_at.desc())
                 .first()
             )
-            scores = scores_for_open_pr(pr, pred, now)
-            if scores.get("source") == "heuristic":
-                uses_heuristic = True
+            if pred:
+                score_source = "ml"
+                risk_score = round((pred.risk_score or 0) * 100, 1)
+                bottleneck_probability = round((pred.bottleneck_probability or 0) * 100, 1)
+                predicted_delay_days = pred.predicted_delay_days
+                predicted_delay_display = (
+                    format_duration(predicted_delay_days * 24)
+                    if predicted_delay_days is not None
+                    else None
+                )
+                predicted_review_wait_hours = (
+                    round(pred.predicted_review_wait, 1)
+                    if pred.predicted_review_wait is not None
+                    else None
+                )
+            else:
+                score_source = "unavailable"
+                risk_score = 0
+                bottleneck_probability = 0
+                predicted_delay_days = None
+                predicted_delay_display = None
+                predicted_review_wait_hours = None
+
             results.append({
                 "number": pr.pr_number,
                 "title": pr.title,
                 "author": pr.author,
                 "review_count": pr.review_count or 0,
                 "files_changed": pr.files_changed or 0,
-                "predicted_delay_days": scores.get("predicted_delay_days"),
-                "predicted_delay_display": scores.get("predicted_delay_display"),
-                "bottleneck_probability": scores.get("bottleneck_probability", 0),
-                "risk_score": scores.get("risk_score", 0),
-                "predicted_review_wait_hours": scores.get("predicted_review_wait_hours"),
-                "score_source": scores.get("source", "heuristic"),
+                "predicted_delay_days": predicted_delay_days,
+                "predicted_delay_display": predicted_delay_display,
+                "bottleneck_probability": bottleneck_probability,
+                "risk_score": risk_score,
+                "predicted_review_wait_hours": predicted_review_wait_hours,
+                "score_source": score_source,
             })
         results.sort(key=lambda x: x["risk_score"], reverse=True)
-        if results and uses_heuristic:
-            results[0]["_panel_note"] = (
-                "Scores are rule-based estimates (ML models not trained yet). "
-                "Re-analyze after training models for ML predictions."
-            )
         return results[:limit]
 
     def get_stale_recommendations(self, repo_id: int, stale_days: int = 30) -> List[Dict[str, Any]]:

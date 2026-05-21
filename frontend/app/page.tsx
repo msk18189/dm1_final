@@ -1,8 +1,10 @@
 'use client'
 
+import Link from 'next/link'
 import { useState, useCallback, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import AppShell, { NavSection } from '@/components/AppShell'
+import AuthPanel from '@/components/AuthPanel'
 import RepositoryInput from '@/components/RepositoryInput'
 import KPICard from '@/components/KPICard'
 import DataTable from '@/components/DataTable'
@@ -32,6 +34,7 @@ import {
 } from '@/lib/api'
 import { formatDurationDisplay, formatDurationFromDays } from '@/lib/format'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
+import { getAuthUser, signOut } from '@/lib/auth'
 import {
   AlertCircle,
   FolderGit2,
@@ -69,14 +72,21 @@ export default function Home() {
   const [authors, setAuthors] = useState<string[]>([])
   const [filters, setFilters] = useState<DashboardFiltersState>(defaultFilters)
   const [activeSection, setActiveSection] = useState<NavSection>('analyze')
+  const [authUser, setAuthUser] = useState<string | null>(null)
 
   useEffect(() => {
     setGithubToken(loadGithubToken())
+    setAuthUser(getAuthUser())
   }, [])
 
   const handleGithubTokenChange = (value: string) => {
     setGithubToken(value)
     saveGithubToken(value)
+  }
+
+  const handleSignOut = () => {
+    signOut()
+    setAuthUser(null)
   }
 
   const loadDashboardData = useCallback(
@@ -103,6 +113,8 @@ export default function Home() {
           getStaleAlerts(id),
           getAuthors(id),
         ])
+
+        console.log('ML prediction data loaded:', prRisk)
 
         const reviewTurnaround = contributors.map((c: any) => ({
           username: c.username,
@@ -172,30 +184,43 @@ export default function Home() {
     <AppShell
       hasData={hasData}
       repoLabel={hasData ? repoLabelFromUrl(repoUrl) : undefined}
+      userLabel={authUser ? `Signed in as ${authUser}` : undefined}
       activeSection={activeSection}
       onNavigate={setActiveSection}
-      headerActions={repoId ? <ExportButton repoId={repoId} filters={filters} /> : undefined}
+      headerActions={repoId ? <ExportButton repoId={repoId} filters={filters} /> : authUser ? (
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="btn-secondary rounded-2xl px-4 py-2 text-sm font-semibold"
+        >
+          Sign out
+        </button>
+      ) : undefined}
     >
       <section id="section-analyze" className={hasData ? 'scroll-mt-8 mb-8' : ''}>
-        {hasData ? (
-          <RepositoryInput
-            githubToken={githubToken}
-            onGithubTokenChange={handleGithubTokenChange}
-            onAnalyze={handleAnalyze}
-            isLoading={isLoading}
-          />
-        ) : (
-          <div className="landing-glow-wrap">
-            <div className="landing-glow-box">
-              <RepositoryInput
-                variant="hero"
-                githubToken={githubToken}
-                onGithubTokenChange={handleGithubTokenChange}
-                onAnalyze={handleAnalyze}
-                isLoading={isLoading}
-              />
+        {authUser ? (
+          hasData ? (
+            <RepositoryInput
+              githubToken={githubToken}
+              onGithubTokenChange={handleGithubTokenChange}
+              onAnalyze={handleAnalyze}
+              isLoading={isLoading}
+            />
+          ) : (
+            <div className="landing-glow-wrap">
+              <div className="landing-glow-box">
+                <RepositoryInput
+                  variant="hero"
+                  githubToken={githubToken}
+                  onGithubTokenChange={handleGithubTokenChange}
+                  onAnalyze={handleAnalyze}
+                  isLoading={isLoading}
+                />
+              </div>
             </div>
-          </div>
+          )
+        ) : (
+          <AuthPanel onAuthenticated={(username) => setAuthUser(username)} />
         )}
       </section>
 

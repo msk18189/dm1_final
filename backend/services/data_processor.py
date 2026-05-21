@@ -197,7 +197,6 @@ class DataProcessor:
             self._update_total_analysis(repo)
             
             self.db.commit()
-            
             print(f"[6/6] [SUCCESS] Successfully processed {pr_count} PRs for {owner}/{repo_name}")
             
             return {
@@ -280,6 +279,110 @@ class DataProcessor:
             )
             self.db.add(analysis)
 
+    def _compute_pr_ml_features(self, pr: PullRequest) -> Dict[str, list[float]]:
+        """Create ML feature vectors from a stored PullRequest record."""
+        age_days = 0.0
+        if pr.created_at:
+            created = pr.created_at
+            if created.tzinfo is None:
+                from datetime import timezone
+                created = created.replace(tzinfo=timezone.utc)
+            age_days = float((datetime.now(timezone.utc) - created).days)
+
+        return {
+            "delay_features": [
+                float(pr.files_changed or 0),
+                float(pr.commit_count or 0),
+                float(pr.review_count or 0),
+                float(pr.lines_added or 0),
+                float(pr.lines_deleted or 0),
+                float(pr.review_count or 0),
+            ],
+            "bottleneck_features": [
+                float(pr.wait_for_review_hours or 0),
+                float(pr.review_duration_hours or 0),
+                float(pr.comment_count or 0),
+                float(pr.commit_count or 0),
+                float(age_days),
+            ],
+            "risk_features": [
+                float(pr.comment_count or 0),
+                float(pr.review_count or 0),
+                float(pr.files_changed or 0),
+                float((pr.lines_added or 0) + (pr.lines_deleted or 0)),
+                0.5,
+            ],
+            "review_wait_features": [
+                float(pr.review_count or 0),
+                1.0,
+                float(pr.files_changed or 0),
+                0.0,
+                1.0,
+            ],
+        }
+
+    def _score_pr_with_ml(self, pr: PullRequest):
+        """Create or refresh ML predictions for a stored PR."""
+        ml_models = self._get_ml_models()
+        if not ml_models:
+            print(f"[ML SKIP] No ML models available for PR {pr.pr_number}")
+            return None
+
+        features = self._compute_pr_ml_features(pr)
+        try:
+            predicted_delay = float(ml_models.predict_delay(features["delay_features"]))
+            bottleneck_prob = float(ml_models.predict_bottleneck(features["bottleneck_features"]))
+            risk_score = float(ml_models.predict_risk(features["risk_features"]))
+            predicted_review_wait = float(
+                ml_models.predict_review_wait(features["review_wait_features"])
+            )
+        except Exception as exc:
+            print(f"[ML ERROR] Prediction failed for PR {pr.pr_number}: {exc}")
+            return None
+
+        # Do not fall back to heuristic scores here. Use only ML model outputs.
+        # If the ML models are unavailable or prediction fails, no prediction is stored.
+
+        self.db.query(MLPrediction).filter(MLPrediction.pr_id == pr.id).delete(synchronize_session=False)
+        prediction = MLPrediction(
+            pr_id=pr.id,
+            repo_owner=pr.repo_owner,
+            repo_name=pr.repo_name,
+            predicted_delay_days=predicted_delay,
+            bottleneck_probability=bottleneck_prob,
+            risk_score=risk_score,
+            predicted_review_wait=predicted_review_wait,
+        )
+        self.db.add(prediction)
+        print(f"[ML] Refreshed predictions for PR {pr.pr_number}")
+        return prediction
+
+    def refresh_ml_predictions(self, repo_id: int = None, only_open_prs: bool = True) -> int:
+        """Refresh stored ML predictions for existing PRs in the database."""
+        query = self.db.query(PullRequest)
+        if repo_id is not None:
+            query = query.filter(PullRequest.repo_id == repo_id)
+        if only_open_prs:
+            query = query.filter(PullRequest.state == "OPEN")
+        prs = query.all()
+
+        if not prs:
+            print("[ML] No PRs found for prediction refresh.")
+            return 0
+
+        refreshed = 0
+        for pr in prs:
+            try:
+                if self._score_pr_with_ml(pr) is not None:
+                    refreshed += 1
+            except Exception as exc:
+                print(f"[ML WARNING] Could not refresh PR {pr.pr_number}: {exc}")
+                continue
+
+        self.db.commit()
+        print(f"[ML] Refreshed predictions for {refreshed} PR(s)")
+        return refreshed
+
     def _generate_predictions_safe(self, pr: PullRequest, parsed_pr: Dict):
         """Generate ML predictions safely - won't crash if ML fails"""
         try:
@@ -340,16 +443,8 @@ class DataProcessor:
                 risk_score = float(risk_score) if risk_score else 0.0
                 predicted_review_wait = float(predicted_review_wait) if predicted_review_wait else 0.0
 
-                # Fallback to heuristics when ML models are not trained (.pkl missing)
-                if predicted_delay == 0 and bottleneck_prob == 0 and risk_score == 0:
-                    from services.risk_heuristics import compute_heuristic_scores
-                    h = compute_heuristic_scores(pr)
-                    predicted_delay = h["predicted_delay_days"]
-                    bottleneck_prob = h["bottleneck_probability"] / 100.0
-                    risk_score = h["risk_score"] / 100.0
-                    predicted_review_wait = h["predicted_review_wait_hours"]
-                
-                # Store predictions
+                # Store predictions only from ML outputs.
+                # Do not replace missing ML values with heuristic estimates.
                 prediction = MLPrediction(
                     pr_id=pr.id,
                     repo_owner=pr.repo_owner,

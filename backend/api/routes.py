@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database.database import get_db
+from ml.models import MLModels
 from services.data_processor import DataProcessor
 from services.analytics import AnalyticsService
 from services.extended_analytics import ExtendedAnalytics
@@ -198,6 +199,37 @@ def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)
             )
         else:
             raise HTTPException(status_code=400, detail=error_msg)
+
+@router.get("/api/ml-status")
+def get_ml_status(db: Session = Depends(get_db)):
+    """Return ML model training status and persisted model files."""
+    from ml.models import MLModels
+
+    ml_models = MLModels()
+    return {
+        "models_exist": ml_models.models_exist(),
+        "model_files": [str(p.name) for p in ml_models.models_dir.glob("*.pkl")],
+        "models_dir": str(ml_models.models_dir),
+    }
+
+@router.post("/api/train-ml")
+def train_ml_models(db: Session = Depends(get_db)):
+    """Train ML models from database data and refresh stored PR predictions."""
+    try:
+        ml_models = MLModels()
+        result = ml_models.train_from_db(db)
+        prediction_refresh_count = 0
+        if result.get("trained"):
+            processor = DataProcessor(db)
+            prediction_refresh_count = processor.refresh_ml_predictions(only_open_prs=False)
+        return {
+            "trained": result.get("trained", False),
+            "summary": result.get("summary", []),
+            "models": result.get("models", {}),
+            "predictions_refreshed": prediction_refresh_count,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.get("/api/kpi/{repo_id}")
 def get_kpi(
