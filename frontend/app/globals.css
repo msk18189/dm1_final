@@ -77,12 +77,10 @@ body {
   position: absolute;
   inset: -40px;
   border-radius: 2.5rem;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(198, 123, 92, 0.25) 0%,
-    rgba(122, 158, 135, 0.15) 50%,
-    transparent 75%
-  );
+  background: radial-gradient(ellipse at center,
+      rgba(198, 123, 92, 0.25) 0%,
+      rgba(122, 158, 135, 0.15) 50%,
+      transparent 75%);
   filter: blur(32px);
   z-index: 0;
   pointer-events: none;
@@ -105,13 +103,11 @@ body {
 }
 
 .btn-primary {
-  @apply rounded-xl bg-palette-orange px-5 py-2.5 font-semibold text-white transition-all duration-200
-    hover:bg-palette-orange-dark hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-50;
+  @apply rounded-xl bg-palette-orange px-5 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-palette-orange-dark hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-50;
 }
 
 .btn-secondary {
-  @apply rounded-xl border border-warm-200 bg-white px-5 py-2.5 font-semibold text-midnight-900 transition-all duration-200
-    hover:border-palette-emerald hover:bg-palette-emerald-light;
+  @apply rounded-xl border border-warm-200 bg-white px-5 py-2.5 font-semibold text-midnight-900 transition-all duration-200 hover:border-palette-emerald hover:bg-palette-emerald-light;
 }
 
 .btn-ghost {
@@ -144,6 +140,50 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #c67b5c, #7a9e87);
+  background: linear-gradient(180deg, #c67b5c, #d4a054);
   border-radius: 3px;
+}
+
+.auth-bg {
+  background: radial-gradient(circle at 15% 25%, rgba(198, 123, 92, 0.05) 0%, transparent 40%),
+              radial-gradient(circle at 85% 75%, rgba(212, 160, 84, 0.04) 0%, transparent 45%),
+              radial-gradient(circle at 50% 50%, rgba(198, 123, 92, 0.04) 0%, transparent 60%),
+              #faf6f0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Ambient gradient mesh glowing blobs */
+.auth-glow-1 {
+  position: absolute;
+  top: 10%;
+  left: 15%;
+  width: 450px;
+  height: 450px;
+  background: radial-gradient(circle, rgba(198, 123, 92, 0.05) 0%, transparent 70%);
+  filter: blur(80px);
+  pointer-events: none;
+  animation: auth-float-slow 22s ease-in-out infinite alternate;
+}
+
+.auth-glow-2 {
+  position: absolute;
+  bottom: 10%;
+  right: 15%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(212, 160, 84, 0.04) 0%, transparent 70%);
+  filter: blur(100px);
+  pointer-events: none;
+  animation: auth-float-slower 28s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes auth-float-slow {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(50px, 30px) scale(1.1); }
+}
+
+@keyframes auth-float-slower {
+  0% { transform: translate(0, 0) scale(1.1); }
+  100% { transform: translate(-60px, -20px) scale(0.95); }
 }

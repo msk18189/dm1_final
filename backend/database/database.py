@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote_plus 
 
 load_dotenv()
 
@@ -42,9 +43,10 @@ if not DATABASE_URL:
     except Exception as e:
         print(f"Warning: Could not check/create database '{DB_NAME}': {e}")
 
+    encoded_password = quote_plus(DB_PASSWORD)
     if DB_PASSWORD:
         SQLALCHEMY_DATABASE_URL = (
-            f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+            f"mysql+pymysql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
     else:
         SQLALCHEMY_DATABASE_URL = (
@@ -61,7 +63,7 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
-    echo=True,
+    echo=False,
     connect_args=connect_args,
 )
 

@@ -12,13 +12,13 @@ import DashboardFilters, { DashboardFiltersState } from '@/components/DashboardF
 import PRRiskPanel from '@/components/PRRiskPanel'
 import StalePRAlerts from '@/components/StalePRAlerts'
 import ExportButton from '@/components/ExportButton'
-import MergeRateDonut from '@/components/MergeRateDonut'
-import {
-  MonthlyFlowChart,
-  ThroughputChart,
-  ContributorChart,
-  ReviewTurnaroundChart,
-} from '@/components/Charts'
+import dynamic from 'next/dynamic'
+
+const MergeRateDonut = dynamic(() => import('@/components/MergeRateDonut'), { ssr: false })
+const MonthlyFlowChart = dynamic(() => import('@/components/Charts').then((mod) => mod.MonthlyFlowChart), { ssr: false })
+const ThroughputChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ThroughputChart), { ssr: false })
+const ContributorChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ContributorChart), { ssr: false })
+const ReviewTurnaroundChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ReviewTurnaroundChart), { ssr: false })
 import {
   analyzeRepository,
   formatApiError,
@@ -180,14 +180,18 @@ export default function Home() {
 
   const hasData = Boolean(data && repoId)
 
+  if (!authUser) {
+    return <AuthPanel onAuthenticated={(username) => setAuthUser(username)} />
+  }
+
   return (
     <AppShell
       hasData={hasData}
       repoLabel={hasData ? repoLabelFromUrl(repoUrl) : undefined}
-      userLabel={authUser ? `Signed in as ${authUser}` : undefined}
+      userLabel={`Signed in as ${authUser}`}
       activeSection={activeSection}
       onNavigate={setActiveSection}
-      headerActions={repoId ? <ExportButton repoId={repoId} filters={filters} /> : authUser ? (
+      headerActions={repoId ? <ExportButton repoId={repoId} filters={filters} /> : (
         <button
           type="button"
           onClick={handleSignOut}
@@ -195,32 +199,28 @@ export default function Home() {
         >
           Sign out
         </button>
-      ) : undefined}
+      )}
     >
       <section id="section-analyze" className={hasData ? 'scroll-mt-8 mb-8' : ''}>
-        {authUser ? (
-          hasData ? (
-            <RepositoryInput
-              githubToken={githubToken}
-              onGithubTokenChange={handleGithubTokenChange}
-              onAnalyze={handleAnalyze}
-              isLoading={isLoading}
-            />
-          ) : (
-            <div className="landing-glow-wrap">
-              <div className="landing-glow-box">
-                <RepositoryInput
-                  variant="hero"
-                  githubToken={githubToken}
-                  onGithubTokenChange={handleGithubTokenChange}
-                  onAnalyze={handleAnalyze}
-                  isLoading={isLoading}
-                />
-              </div>
-            </div>
-          )
+        {hasData ? (
+          <RepositoryInput
+            githubToken={githubToken}
+            onGithubTokenChange={handleGithubTokenChange}
+            onAnalyze={handleAnalyze}
+            isLoading={isLoading}
+          />
         ) : (
-          <AuthPanel onAuthenticated={(username) => setAuthUser(username)} />
+          <div className="landing-glow-wrap">
+            <div className="landing-glow-box">
+              <RepositoryInput
+                variant="hero"
+                githubToken={githubToken}
+                onGithubTokenChange={handleGithubTokenChange}
+                onAnalyze={handleAnalyze}
+                isLoading={isLoading}
+              />
+            </div>
+          </div>
         )}
       </section>
 
