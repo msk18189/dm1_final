@@ -1,6 +1,7 @@
 import os
 import requests
-from typing import Dict, List, Any
+import time
+from typing import Dict, List, Any, Tuple
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -22,47 +23,82 @@ class GitHubClient:
                 self.headers["Authorization"] = f"token {self.token}"
     
     def query(self, query: str, variables: Dict = None) -> Dict:
-        """Execute GraphQL query"""
+        """Execute GraphQL query with rate limit handling and retries"""
         payload = {"query": query}
         if variables:
             payload["variables"] = variables
         
-        try:
-            response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=30)
-            print(f"GitHub Client: Response status: {response.status_code}")
-            
-            if response.status_code == 401:
-                raise Exception("Bad credentials: GitHub token is invalid or expired")
-            if response.status_code == 403:
-                body = response.json() if response.content else {}
-                message = body.get("message", "GitHub API rate limit or missing token")
-                if not self.token:
-                    raise Exception(
-                        "GitHub API access denied. Set GITHUB_TOKEN in backend/.env"
-                    )
-                raise Exception(f"GitHub API forbidden: {message}")
-            
-            data = response.json()
-            print(f"GitHub Client: Response keys: {data.keys()}")
-            
-            if "message" in data and "errors" not in data:
-                raise Exception(f"GitHub API error: {data['message']}")
-            
-            if "errors" in data:
-                error_msg = str(data['errors'])
-                print(f"GitHub API Error: {error_msg}")
-                raise Exception(f"GraphQL Error: {error_msg}")
-            
-            return data.get("data", {})
-        except requests.exceptions.Timeout:
-            print("GitHub Client: Request timeout - GitHub API took too long")
-            raise Exception("GitHub API request timed out. Try again later.")
-        except requests.exceptions.ConnectionError as e:
-            print(f"GitHub Client: Connection error: {str(e)}")
-            raise Exception("Connection error to GitHub API. Check your internet connection.")
-        except Exception as e:
-            print(f"GitHub Client: Error: {str(e)}")
-            raise
+        max_retries = 3
+        backoff_delay = 5.0
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=30)
+                print(f"GitHub Client: Response status: {response.status_code}")
+                
+                # Check for rate limit status (403 or 429)
+                if response.status_code in (403, 429):
+                    # Check headers for reset time
+                    reset_time_str = response.headers.get("X-RateLimit-Reset")
+                    if reset_time_str:
+                        try:
+                            reset_time = float(reset_time_str)
+                            sleep_dur = max(1.0, reset_time - time.time() + 2)
+                            print(f"[Rate Limit] Limit reached. Sleeping for {sleep_dur:.1f} seconds...")
+                            time.sleep(sleep_dur)
+                            continue
+                        except Exception:
+                            pass
+                    
+                    print(f"[Rate Limit] 403/429 status. Backing off for {backoff_delay}s (Attempt {attempt+1}/{max_retries})...")
+                    time.sleep(backoff_delay)
+                    backoff_delay *= 2
+                    continue
+                
+                if response.status_code == 401:
+                    raise Exception("Bad credentials: GitHub token is invalid or expired")
+                
+                if response.status_code != 200:
+                    print(f"GitHub Client: Non-200 response: {response.status_code}. Content: {response.text[:500]}")
+                    if response.status_code in (500, 502, 503, 504, 408):
+                        if attempt == max_retries - 1:
+                            raise Exception(f"GitHub API error {response.status_code}: {response.text[:200]}")
+                        print(f"Temporary server error. Retrying after {backoff_delay}s...")
+                        time.sleep(backoff_delay)
+                        backoff_delay *= 2
+                        continue
+                    raise Exception(f"GitHub API returned HTTP {response.status_code}: {response.text[:200]}")
+                
+                data = response.json()
+                
+                # Check for GraphQL errors related to rate limit / secondary rate limit
+                if "errors" in data:
+                    error_msg = str(data['errors'])
+                    if "rate limit" in error_msg.lower() or "secondary" in error_msg.lower():
+                        print(f"[Rate Limit] GraphQL rate limit error: {error_msg}. Retrying after sleep...")
+                        time.sleep(backoff_delay)
+                        backoff_delay *= 2
+                        continue
+                    print(f"GitHub API Error: {error_msg}")
+                    raise Exception(f"GraphQL Error: {error_msg}")
+                
+                return data.get("data", {})
+                
+            except requests.exceptions.Timeout:
+                print("GitHub Client: Request timeout")
+                if attempt == max_retries - 1:
+                    raise Exception("GitHub API request timed out. Try again later.")
+                time.sleep(backoff_delay)
+                backoff_delay *= 2
+            except requests.exceptions.ConnectionError as e:
+                print(f"GitHub Client: Connection error: {str(e)}")
+                if attempt == max_retries - 1:
+                    raise Exception("Connection error to GitHub API. Check your internet connection.")
+                time.sleep(backoff_delay)
+                backoff_delay *= 2
+            except Exception as e:
+                print(f"GitHub Client: Error: {str(e)}")
+                raise
     
     def verify_repository_access(self, owner: str, repo: str) -> Dict[str, Any]:
         """Verify repository access and check if it is private"""
@@ -93,30 +129,42 @@ class GitHubClient:
             print(f"GitHub Client: Error verifying repository: {str(e)}")
             raise
 
-    def fetch_pull_requests(self, owner: str, repo: str, first: int = 50) -> List[Dict]:
-        """Fetch PRs with reviews and commits - simplified query"""
+    def fetch_pull_requests(
+        self, owner: str, repo: str, first: int = 50, cursor: str = None
+    ) -> Tuple[List[Dict], Dict, Dict]:
+        """Fetch a page of PRs with reviews and commits, plus rate limit info."""
         query = """
-        query($owner: String!, $repo: String!, $first: Int!) {
+        query($owner: String!, $repo: String!, $first: Int!, $cursor: String) {
+            rateLimit {
+                limit
+                remaining
+                resetAt
+            }
             repository(owner: $owner, name: $repo) {
-                pullRequests(first: $first, orderBy: {field: CREATED_AT, direction: DESC}) {
+                pullRequests(first: $first, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                    }
                     nodes {
                         number
                         title
                         state
                         createdAt
+                        updatedAt
                         mergedAt
                         closedAt
-                        commits(first: 5) {
+                        commits(first: 1) {
                             totalCount
                         }
-                        files(first: 5) {
+                        files(first: 50) {
                             totalCount
                             nodes {
                                 additions
                                 deletions
                             }
                         }
-                        reviews(first: 5) {
+                        reviews(first: 50) {
                             totalCount
                             nodes {
                                 state
@@ -126,7 +174,7 @@ class GitHubClient:
                                 }
                             }
                         }
-                        comments(first: 3) {
+                        comments(first: 1) {
                             totalCount
                         }
                         author {
@@ -137,11 +185,10 @@ class GitHubClient:
             }
         }
         """
-        
-        variables = {"owner": owner, "repo": repo, "first": first}
+        variables = {"owner": owner, "repo": repo, "first": first, "cursor": cursor}
         try:
             data = self.query(query, variables)
-            print(f"GitHub Client: Query response data keys: {data.keys()}")
+            rate_limit = data.get("rateLimit", {})
             
             repo_data = data.get("repository")
             if not repo_data:
@@ -150,9 +197,10 @@ class GitHubClient:
                     "(https://github.com/owner/repo) and your token can access it."
                 )
             
-            prs = repo_data.get("pullRequests", {}).get("nodes", [])
-            print(f"GitHub Client: Found {len(prs)} PRs")
-            return prs or []
+            conn = repo_data.get("pullRequests", {})
+            prs = conn.get("nodes", [])
+            page_info = conn.get("pageInfo", {"hasNextPage": False, "endCursor": None})
+            return prs or [], page_info, rate_limit
         except Exception as e:
             print(f"GitHub Client: Error fetching PRs: {str(e)}")
             raise
@@ -169,6 +217,11 @@ class GitHubClient:
                 raise ValueError("PR missing createdAt")
             
             created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            
+            updated_at_str = pr.get("updatedAt")
+            updated_at = None
+            if updated_at_str:
+                updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
             
             merged_at = pr.get("mergedAt")
             if merged_at:
@@ -257,6 +310,7 @@ class GitHubClient:
                 "title": pr.get("title", ""),
                 "state": pr.get("state", "UNKNOWN"),
                 "created_at": created_at,
+                "updated_at": updated_at,
                 "merged_at": merged_at,
                 "closed_at": closed_at,
                 "commit_count": commit_count,

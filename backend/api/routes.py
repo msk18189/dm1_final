@@ -1,15 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from database.database import get_db
+from database.database import get_db, SessionLocal
+from database.models import Repository
 from ml.models import MLModels
-from services.data_processor import DataProcessor
-from services.analytics import AnalyticsService
+from services.data_processor import DataProcessor, parse_github_repo_url, normalize_github_url
 from services.extended_analytics import ExtendedAnalytics
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from typing import Optional
 import io
+import threading
 
 router = APIRouter()
 
@@ -47,62 +48,6 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
         canonical_url = normalize_github_url(result["owner"], result["repo"])
         
         return {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            
             "ok": True,
             "owner": result["owner"],
             "repo": result["repo"],
@@ -151,54 +96,96 @@ def get_repositories(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def run_background_sync(repo_url: str, github_token: Optional[str]):
+    db = SessionLocal()
+    try:
+        processor = DataProcessor(db)
+        processor.process_repository(repo_url, github_token=github_token)
+    except Exception as e:
+        print(f"Error in background sync for {repo_url}: {e}")
+    finally:
+        db.close()
+
 @router.post("/api/analyze")
 def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
-    """Analyze a GitHub repository"""
+    """Analyze a GitHub repository asynchronously"""
     try:
-        print(f"Analyzing repository: {request.url}")
-        processor = DataProcessor(db)
+        url = request.url.strip()
+        print(f"Analyzing repository: {url}")
+        owner, repo_name = parse_github_repo_url(url)
+        canonical_url = normalize_github_url(owner, repo_name)
+        
         token = (request.github_token or "").strip() or None
-        result = processor.process_repository(request.url, github_token=token)
-        print(f"Analysis result: {result}")
-        if result.get("error"):
-            raise HTTPException(status_code=400, detail=result["error"])
-        return result
-    except HTTPException:
-        raise
+        
+        # Check or create repo record in main thread
+        repo = db.query(Repository).filter(
+            Repository.owner == owner,
+            Repository.name == repo_name
+        ).first()
+        
+        if not repo:
+            full_name = f"{owner}/{repo_name}"
+            repo = Repository(
+                owner=owner,
+                name=repo_name,
+                full_name=full_name,
+                url=canonical_url,
+                source_url=url,
+                stars=0,
+                sync_status="SYNCING",
+                sync_progress="Enqueuing background analysis job...",
+            )
+            db.add(repo)
+            db.commit()
+            db.refresh(repo)
+        else:
+            repo.sync_status = "SYNCING"
+            repo.sync_progress = "Enqueuing background analysis job..."
+            db.commit()
+            db.refresh(repo)
+            
+        # Spawn background sync thread
+        threading.Thread(
+            target=run_background_sync,
+            args=(url, token),
+            daemon=True
+        ).start()
+        
+        return {
+            "owner": owner,
+            "repo": repo_name,
+            "repo_id": repo.id,
+            "sync_status": repo.sync_status,
+            "sync_progress": repo.sync_progress,
+            "message": "Background analysis job successfully scheduled."
+        }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         error_msg = str(e)
-        print(f"Error analyzing repository: {error_msg}")
-        
-        # Return helpful error message
-        if "MAX_NODE_LIMIT_EXCEEDED" in error_msg:
-            raise HTTPException(
-                status_code=400, 
-                detail="Repository is too large. Try a smaller repository like facebook/react"
-            )
-        elif "Bad credentials" in error_msg:
-            raise HTTPException(
-                status_code=400, 
-                detail="GitHub token is invalid or expired. Generate a new token at https://github.com/settings/tokens"
-            )
-        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg:
-            raise HTTPException(
-                status_code=400, 
-                detail="Repository not found or is private. Make sure: 1) Repository is public, 2) URL is correct (https://github.com/owner/repo), 3) Token has 'repo' scope for private repos"
-            )
-        elif "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
-            raise HTTPException(
-                status_code=400, 
-                detail="GitHub API request timed out. Try again in a moment."
-            )
-        elif "connection" in error_msg.lower() or "premature" in error_msg.lower():
-            raise HTTPException(
-                status_code=400, 
-                detail="Connection issue with GitHub API. Check your internet connection and try again."
-            )
-        else:
-            raise HTTPException(status_code=400, detail=error_msg)
+        print(f"Error starting repository analysis: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+
+@router.get("/api/sync-status/{repo_id}")
+def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
+    """Get sync status and progress telemetry for a repository"""
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    return {
+        "id": repo.id,
+        "owner": repo.owner,
+        "name": repo.name,
+        "sync_status": repo.sync_status,
+        "sync_progress": repo.sync_progress,
+        "last_synced_at": repo.last_synced_at.isoformat() if repo.last_synced_at else None,
+        "last_successful_sync": repo.last_successful_sync.isoformat() if repo.last_successful_sync else None,
+        "total_prs": repo.total_prs,
+        "error_message": repo.error_message,
+        "rate_limit_remaining": repo.rate_limit_remaining,
+        "rate_limit_limit": repo.rate_limit_limit,
+        "rate_limit_reset": repo.rate_limit_reset.isoformat() if repo.rate_limit_reset else None,
+    }
 
 @router.get("/api/ml-status")
 def get_ml_status(db: Session = Depends(get_db)):
@@ -248,6 +235,7 @@ def get_kpi(
 @router.get("/api/oldest-prs/{repo_id}")
 def get_oldest_prs(
     repo_id: int,
+    page: int = 1,
     limit: int = 10,
     days: Optional[int] = None,
     author: Optional[str] = None,
@@ -257,11 +245,12 @@ def get_oldest_prs(
 ):
     """Get oldest open PRs"""
     ext = ExtendedAnalytics(db)
-    return ext.get_oldest_open_filtered(repo_id, limit, days=days, author=author, start_date=start_date, end_date=end_date)
+    return ext.get_oldest_open_filtered(repo_id, page=page, limit=limit, days=days, author=author, start_date=start_date, end_date=end_date)
 
 @router.get("/api/slowest-prs/{repo_id}")
 def get_slowest_prs(
     repo_id: int,
+    page: int = 1,
     limit: int = 10,
     days: Optional[int] = None,
     author: Optional[str] = None,
@@ -271,11 +260,13 @@ def get_slowest_prs(
 ):
     """Get slowest merged PRs"""
     ext = ExtendedAnalytics(db)
-    return ext.get_slowest_merged_filtered(repo_id, limit, days=days, author=author, start_date=start_date, end_date=end_date)
+    return ext.get_slowest_merged_filtered(repo_id, page=page, limit=limit, days=days, author=author, start_date=start_date, end_date=end_date)
 
 @router.get("/api/contributor-activity/{repo_id}")
 def get_contributor_activity(
     repo_id: int,
+    page: int = 1,
+    limit: int = 10,
     days: Optional[int] = None,
     author: Optional[str] = None,
     state: Optional[str] = None,
@@ -285,7 +276,7 @@ def get_contributor_activity(
 ):
     """Get contributor activity"""
     ext = ExtendedAnalytics(db)
-    return ext.get_contributors_filtered(repo_id, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
+    return ext.get_contributors_filtered(repo_id, page=page, limit=limit, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
 
 @router.get("/api/monthly-flow/{repo_id}")
 def get_monthly_flow(
@@ -324,16 +315,16 @@ def get_authors(repo_id: int, db: Session = Depends(get_db)):
     return {"authors": ext.get_authors(repo_id)}
 
 @router.get("/api/pr-risk/{repo_id}")
-def get_pr_risk(repo_id: int, limit: int = 15, db: Session = Depends(get_db)):
+def get_pr_risk(repo_id: int, page: int = 1, limit: int = 15, db: Session = Depends(get_db)):
     """ML risk & delay predictions for open PRs"""
     ext = ExtendedAnalytics(db)
-    return ext.get_pr_risk_panel(repo_id, limit)
+    return ext.get_pr_risk_panel(repo_id, page=page, limit=limit)
 
 @router.get("/api/stale-alerts/{repo_id}")
-def get_stale_alerts(repo_id: int, db: Session = Depends(get_db)):
+def get_stale_alerts(repo_id: int, page: int = 1, limit: int = 10, db: Session = Depends(get_db)):
     """Stale PR alerts with recommendations"""
     ext = ExtendedAnalytics(db)
-    return ext.get_stale_recommendations(repo_id)
+    return ext.get_stale_recommendations(repo_id, page=page, limit=limit)
 
 @router.post("/api/compare")
 def compare_repositories(request: CompareRequest, db: Session = Depends(get_db)):

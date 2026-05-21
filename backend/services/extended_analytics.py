@@ -1,9 +1,8 @@
-"""Extended analytics: ML panel, stale alerts, compare, export helpers."""
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timezone,timedelta
 from typing import Any, Dict, List, Optional
-
+from sqlalchemy import func, case, and_, or_
 from sqlalchemy.orm import Session
 
 from database.models import MLPrediction, PullRequest, Repository
@@ -12,6 +11,7 @@ from services.filters import (
     ensure_utc,
     format_duration,
     get_filtered_prs,
+    get_filtered_prs_query,
     list_authors,
     pr_cycle_hours,
 )
@@ -420,49 +420,39 @@ class ExtendedAnalytics:
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         filters = _filters_from_params(days, author, state, start_date, end_date)
-        prs = get_filtered_prs(self.db, repo_id, filters)
-        now = ensure_utc(datetime.utcnow())
+        query = get_filtered_prs_query(self.db, repo_id, filters)
+        
+        # Build subquery for aggregations
+        subq = query.subquery()
+        
+        # 1. counts
+        open_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN").scalar() or 0
+        stale_cutoff = datetime.utcnow() - timedelta(days=30)
+        stale_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN", subq.c.created_at < stale_cutoff).scalar() or 0
+        merged_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "MERGED").scalar() or 0
+        closed_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state.in_(["MERGED", "CLOSED"])).scalar() or 0
 
-        open_prs = [p for p in prs if p.state == "OPEN"]
-        stale_prs = [
-            p for p in open_prs
-            if p.created_at and (now - ensure_utc(p.created_at)).days > 30
-        ]
+        # 2. averages
+        avg_cycle_days = self.db.query(func.avg(subq.c.cycle_time_days)).filter(subq.c.state == "MERGED").scalar() or 0.0
+        avg_cycle = avg_cycle_days * 24
 
-        merged = [p for p in prs if p.state == "MERGED"]
-        closed = [p for p in prs if p.state in ("MERGED", "CLOSED")]
+        # For median cycle time:
+        cycle_times = [r[0] for r in self.db.query(subq.c.cycle_time_days).filter(subq.c.state == "MERGED", subq.c.cycle_time_days.isnot(None)).order_by(subq.c.cycle_time_days).all()]
+        if cycle_times:
+            n = len(cycle_times)
+            median_cycle = (cycle_times[n // 2] if n % 2 == 1 else (cycle_times[n // 2 - 1] + cycle_times[n // 2]) / 2) * 24
+        else:
+            median_cycle = 0.0
 
-        cycle_hours = [h for p in merged if (h := pr_cycle_hours(p)) is not None]
-        wait_hours = [
-            p.wait_for_review_hours for p in prs
-            if p.wait_for_review_hours is not None and p.wait_for_review_hours >= 0
-        ]
-        review_hours = [
-            p.review_duration_hours for p in prs
-            if p.review_duration_hours is not None and p.review_duration_hours >= 0
-        ]
+        avg_wait = self.db.query(func.avg(subq.c.wait_for_review_hours)).filter(subq.c.wait_for_review_hours.isnot(None), subq.c.wait_for_review_hours >= 0).scalar() or 0.0
+        avg_review = self.db.query(func.avg(subq.c.review_duration_hours)).filter(subq.c.review_duration_hours.isnot(None), subq.c.review_duration_hours >= 0).scalar() or 0.0
 
-        avg_cycle = sum(cycle_hours) / len(cycle_hours) if cycle_hours else 0
-        median_cycle = 0.0
-        if cycle_hours:
-            sorted_h = sorted(cycle_hours)
-            n = len(sorted_h)
-            median_cycle = (
-                sorted_h[n // 2]
-                if n % 2 == 1
-                else (sorted_h[n // 2 - 1] + sorted_h[n // 2]) / 2
-            )
-
-        avg_wait = sum(wait_hours) / len(wait_hours) if wait_hours else 0
-        avg_review = sum(review_hours) / len(review_hours) if review_hours else 0
-        merge_rate = round((len(merged) / len(closed) * 100) if closed else 0, 2)
-        avg_reviews = (
-            sum(p.review_count or 0 for p in prs) / len(prs) if prs else 0
-        )
+        merge_rate = round((merged_count / closed_count * 100) if closed_count else 0, 2)
+        avg_reviews = self.db.query(func.avg(subq.c.review_count)).scalar() or 0.0
 
         return {
-            "open_prs": len(open_prs),
-            "stale_prs": len(stale_prs),
+            "open_prs": open_count,
+            "stale_prs": stale_count,
             "avg_cycle_time": round(avg_cycle / 24, 2) if avg_cycle else 0,
             "median_cycle_time": round(median_cycle / 24, 1) if median_cycle else 0,
             "avg_wait_for_review": round(avg_wait / 24, 2) if avg_wait else 0,
@@ -479,23 +469,32 @@ class ExtendedAnalytics:
         self, repo_id: int, months: int = 6, **filter_kw
     ) -> List[Dict[str, Any]]:
         filters = _filters_from_params(**filter_kw)
-        prs = get_filtered_prs(self.db, repo_id, filters)
+        query = get_filtered_prs_query(self.db, repo_id, filters)
         month_keys = _month_range(months)
         flow = {
             ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0}
             for ym in month_keys
         }
-        for pr in prs:
-            if pr.created_at:
-                m = _month_key(pr.created_at)
+        
+        # Select only required columns to avoid full ORM object overhead
+        rows = query.with_entities(
+            PullRequest.created_at,
+            PullRequest.merged_at,
+            PullRequest.closed_at,
+            PullRequest.state
+        ).all()
+        
+        for created_at, merged_at, closed_at, state in rows:
+            if created_at:
+                m = _month_key(created_at)
                 if m in flow:
                     flow[m]["created"] += 1
-            if pr.merged_at:
-                m = _month_key(pr.merged_at)
+            if merged_at:
+                m = _month_key(merged_at)
                 if m in flow:
                     flow[m]["merged"] += 1
-            if pr.state == "CLOSED" and pr.closed_at:
-                m = _month_key(pr.closed_at)
+            if state == "CLOSED" and closed_at:
+                m = _month_key(closed_at)
                 if m in flow:
                     flow[m]["closed"] += 1
         return [flow[ym] for ym in month_keys]
@@ -504,81 +503,96 @@ class ExtendedAnalytics:
         self, repo_id: int, weeks: int = 8, **filter_kw
     ) -> List[Dict[str, Any]]:
         filters = _filters_from_params(**filter_kw)
-        prs = get_filtered_prs(self.db, repo_id, filters)
+        query = get_filtered_prs_query(self.db, repo_id, filters)
         week_keys = _week_range(weeks)
         counts = {k: 0 for k in week_keys}
-        for pr in prs:
-            if pr.merged_at:
-                key = _iso_week_key(pr.merged_at)
-                if key in counts:
-                    counts[key] += 1
+        
+        # Select only merged_at to avoid full ORM overhead
+        rows = query.filter(PullRequest.state == "MERGED", PullRequest.merged_at.isnot(None))\
+            .with_entities(PullRequest.merged_at).all()
+            
+        for (merged_at,) in rows:
+            key = _iso_week_key(merged_at)
+            if key in counts:
+                counts[key] += 1
         return [{"week": _week_label(y, w), "prs": counts[(y, w)]} for y, w in week_keys]
 
-    def get_contributors_filtered(self, repo_id: int, limit: int = 15, **filter_kw) -> List[Dict]:
+    def get_contributors_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
-        prs = get_filtered_prs(self.db, repo_id, filters)
-        now = ensure_utc(datetime.utcnow())
-        stats: Dict[str, Dict[str, Any]] = {}
+        
+        # define stale cutoff
+        stale_cutoff = datetime.utcnow() - timedelta(days=30)
 
-        for pr in prs:
-            if not pr.author:
-                continue
-            if pr.author not in stats:
-                stats[pr.author] = {
-                    "username": pr.author,
-                    "total_prs": 0,
-                    "merged_prs": 0,
-                    "open_prs": 0,
-                    "cycle_times": [],
-                    "wait_hours": [],
-                    "stale_pr_count": 0,
-                }
-            entry = stats[pr.author]
-            entry["total_prs"] += 1
-            if pr.state == "MERGED":
-                entry["merged_prs"] += 1
-                h = pr_cycle_hours(pr)
-                if h is not None:
-                    entry["cycle_times"].append(h)
-            elif pr.state == "OPEN":
-                entry["open_prs"] += 1
-                if pr.created_at and (now - ensure_utc(pr.created_at)).days > 30:
-                    entry["stale_pr_count"] += 1
-            if pr.wait_for_review_hours is not None and pr.wait_for_review_hours >= 0:
-                entry["wait_hours"].append(pr.wait_for_review_hours)
+        # We start from the filtered query:
+        query = get_filtered_prs_query(self.db, repo_id, filters)
+        subq = query.subquery()
 
-        result = []
-        for entry in stats.values():
-            total = entry["total_prs"]
-            avg_cycle_h = (
-                sum(entry["cycle_times"]) / len(entry["cycle_times"])
-                if entry["cycle_times"] else 0
-            )
-            avg_wait_h = (
-                sum(entry["wait_hours"]) / len(entry["wait_hours"])
-                if entry["wait_hours"] else 0
-            )
-            result.append({
-                "username": entry["username"],
-                "total_prs": total,
-                "merged_prs": entry["merged_prs"],
-                "open_prs": entry["open_prs"],
-                "avg_cycle_time": round(avg_cycle_h / 24, 2) if avg_cycle_h else 0,
+        # Now group by subq.c.author and aggregate:
+        agg_query = self.db.query(
+            subq.c.author.label("author"),
+            func.count(subq.c.id).label("total_prs"),
+            func.sum(case((subq.c.state == "MERGED", 1), else_=0)).label("merged_prs"),
+            func.sum(case((subq.c.state == "OPEN", 1), else_=0)).label("open_prs"),
+            func.sum(case((and_(subq.c.state == "OPEN", subq.c.created_at < stale_cutoff), 1), else_=0)).label("stale_prs"),
+            func.avg(case((subq.c.state == "MERGED", subq.c.cycle_time_days), else_=None)).label("avg_cycle"),
+            func.avg(subq.c.wait_for_review_hours).label("avg_wait")
+        ).filter(subq.c.author.isnot(None)).group_by(subq.c.author)
+        
+        # Get total number of contributors
+        total_contributors = agg_query.count()
+        
+        # Sort and paginate
+        agg_query = agg_query.order_by(func.count(subq.c.id).desc())
+        offset = (page - 1) * limit
+        results = agg_query.offset(offset).limit(limit).all()
+        
+        formatted_results = []
+        for r in results:
+            author = r.author
+            total_prs = r.total_prs
+            merged_prs = int(r.merged_prs or 0)
+            open_prs = int(r.open_prs or 0)
+            stale_pr_count = int(r.stale_prs or 0)
+            
+            avg_cycle_days = float(r.avg_cycle or 0.0)
+            avg_cycle_h = avg_cycle_days * 24
+            
+            avg_wait_h = float(r.avg_wait or 0.0)
+            
+            formatted_results.append({
+                "username": author,
+                "total_prs": total_prs,
+                "merged_prs": merged_prs,
+                "open_prs": open_prs,
+                "avg_cycle_time": round(avg_cycle_days, 2),
                 "avg_cycle_time_display": format_duration(avg_cycle_h),
                 "avg_wait_for_review": round(avg_wait_h / 24, 2) if avg_wait_h else 0,
-                "merge_rate": round((entry["merged_prs"] / total * 100) if total else 0, 2),
-                "stale_pr_count": entry["stale_pr_count"],
+                "merge_rate": round((merged_prs / total_prs * 100) if total_prs else 0, 2),
+                "stale_pr_count": stale_pr_count,
             })
-        result.sort(key=lambda x: x["total_prs"], reverse=True)
-        return result[:limit]
+            
+        return {
+            "data": formatted_results,
+            "total": total_contributors,
+            "page": page,
+            "limit": limit,
+            "pages": (total_contributors + limit - 1) // limit if limit else 1
+        }
 
-    def get_oldest_open_filtered(self, repo_id: int, limit: int = 10, **filter_kw) -> List[Dict]:
+    def get_oldest_open_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
         filters.state = "OPEN"
-        prs = get_filtered_prs(self.db, repo_id, filters)
-        prs.sort(key=lambda p: p.created_at or datetime.min.replace(tzinfo=timezone.utc))
+        query = get_filtered_prs_query(self.db, repo_id, filters)
+        
+        # Order by created_at ascending
+        query = query.order_by(PullRequest.created_at.asc())
+        
+        total = query.count()
+        offset = (page - 1) * limit
+        prs = query.offset(offset).limit(limit).all()
+        
         now = ensure_utc(datetime.utcnow())
-        return [
+        data = [
             {
                 "number": pr.pr_number,
                 "title": pr.title,
@@ -587,47 +601,79 @@ class ExtendedAnalytics:
                 "author": pr.author,
                 "review_count": pr.review_count,
             }
-            for pr in prs[:limit]
+            for pr in prs
         ]
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit else 1
+        }
 
-    def get_slowest_merged_filtered(self, repo_id: int, limit: int = 10, **filter_kw) -> List[Dict]:
+    def get_slowest_merged_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
         filters.state = "MERGED"
-        prs = get_filtered_prs(self.db, repo_id, filters)
-        prs = [p for p in prs if pr_cycle_hours(p) is not None]
-        prs.sort(key=lambda p: pr_cycle_hours(p) or 0, reverse=True)
-        return [
+        query = get_filtered_prs_query(self.db, repo_id, filters)
+        
+        # Order by cycle_time_days descending
+        query = query.filter(PullRequest.cycle_time_days.isnot(None))\
+            .order_by(PullRequest.cycle_time_days.desc())
+            
+        total = query.count()
+        offset = (page - 1) * limit
+        prs = query.offset(offset).limit(limit).all()
+        
+        data = [
             {
                 "number": pr.pr_number,
                 "title": pr.title,
-                "cycle_time_days": round((pr_cycle_hours(pr) or 0) / 24, 2),
-                "cycle_time_display": format_duration(pr_cycle_hours(pr)),
+                "cycle_time_days": round(pr.cycle_time_days, 2) if pr.cycle_time_days is not None else 0,
+                "cycle_time_display": format_duration(pr.cycle_time_days * 24) if pr.cycle_time_days is not None else {"value": 0, "unit": "hrs", "raw_hours": 0.0},
                 "merged_at": pr.merged_at.isoformat() if pr.merged_at else None,
                 "author": pr.author,
                 "review_count": pr.review_count,
                 "files_changed": pr.files_changed,
             }
-            for pr in prs[:limit]
+            for pr in prs
         ]
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit else 1
+        }
 
     def get_authors(self, repo_id: int) -> List[str]:
         return list_authors(self.db, repo_id)
 
-    def get_pr_risk_panel(self, repo_id: int, limit: int = 15) -> List[Dict[str, Any]]:
-        open_prs = (
-            self.db.query(PullRequest)
+    def get_pr_risk_panel(self, repo_id: int, page: int = 1, limit: int = 15) -> Dict[str, Any]:
+        open_prs_query = self.db.query(PullRequest)\
             .filter(PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
-            .all()
-        )
-        now = ensure_utc(datetime.utcnow())
-        results = []
-        for pr in open_prs:
-            pred = (
-                self.db.query(MLPrediction)
-                .filter(MLPrediction.pr_id == pr.id)
-                .order_by(MLPrediction.created_at.desc())
-                .first()
+            
+        total = open_prs_query.count()
+        
+
+        query = self.db.query(PullRequest, MLPrediction)\
+            .outerjoin(MLPrediction, PullRequest.id == MLPrediction.pr_id)\
+            .filter(
+                PullRequest.repo_id == repo_id,
+                PullRequest.state == "OPEN"
+            )\
+            .order_by(
+                case(
+                    (MLPrediction.risk_score == None, 1),
+                    else_=0
+                ),
+                MLPrediction.risk_score.desc(),
+                PullRequest.created_at.asc()
             )
+        offset = (page - 1) * limit
+        results = query.offset(offset).limit(limit).all()
+        
+        data = []
+        for pr, pred in results:
             if pred:
                 score_source = "ml"
                 risk_score = round((pred.risk_score or 0) * 100, 1)
@@ -645,13 +691,13 @@ class ExtendedAnalytics:
                 )
             else:
                 score_source = "unavailable"
-                risk_score = 0
-                bottleneck_probability = 0
+                risk_score = 0.0
+                bottleneck_probability = 0.0
                 predicted_delay_days = None
                 predicted_delay_display = None
                 predicted_review_wait_hours = None
-
-            results.append({
+                
+            data.append({
                 "number": pr.pr_number,
                 "title": pr.title,
                 "author": pr.author,
@@ -664,18 +710,34 @@ class ExtendedAnalytics:
                 "predicted_review_wait_hours": predicted_review_wait_hours,
                 "score_source": score_source,
             })
-        results.sort(key=lambda x: x["risk_score"], reverse=True)
-        return results[:limit]
+            
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit else 1
+        }
 
-    def get_stale_recommendations(self, repo_id: int, stale_days: int = 30) -> List[Dict[str, Any]]:
+    def get_stale_recommendations(self, repo_id: int, page: int = 1, limit: int = 10, stale_days: int = 30) -> Dict[str, Any]:
         now = ensure_utc(datetime.utcnow())
-        open_prs = (
-            self.db.query(PullRequest)
-            .filter(PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
-            .all()
+        cutoff_14 = datetime.utcnow() - timedelta(days=14)
+        
+        query = self.db.query(PullRequest).filter(
+            PullRequest.repo_id == repo_id,
+            PullRequest.state == "OPEN"
+        ).filter(
+            or_(
+                PullRequest.created_at < cutoff_14,
+                PullRequest.review_count == 0,
+                PullRequest.files_changed > 20,
+                and_(PullRequest.comment_count > 10, PullRequest.review_count < 2)
+            )
         )
+        
+        prs = query.all()
         alerts = []
-        for pr in open_prs:
+        for pr in prs:
             if not pr.created_at:
                 continue
             age_days = (now - ensure_utc(pr.created_at)).days
@@ -724,7 +786,17 @@ class ExtendedAnalytics:
 
         order = {"high": 0, "medium": 1, "low": 2}
         alerts.sort(key=lambda x: (order.get(x["severity"], 3), -x["age_days"]))
-        return alerts
+        
+        offset = (page - 1) * limit
+        paginated_alerts = alerts[offset:offset+limit]
+        
+        return {
+            "data": paginated_alerts,
+            "total": len(alerts),
+            "page": page,
+            "limit": limit,
+            "pages": (len(alerts) + limit - 1) // limit if limit else 1
+        }
 
     def compare_repos(self, repo_id_a: int, repo_id_b: int) -> Dict[str, Any]:
         repo_a = self.db.query(Repository).filter(Repository.id == repo_id_a).first()
@@ -776,10 +848,10 @@ class ExtendedAnalytics:
             raise ValueError("Repository not found")
 
         kpi = self.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
-        contributors = self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
-        oldest = self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
-        stale = self.get_stale_recommendations(repo_id)
-        risks = self.get_pr_risk_panel(repo_id, limit=20)
+        contributors = self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state, start_date=start_date, end_date=end_date)["data"]
+        oldest = self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state, start_date=start_date, end_date=end_date)["data"]
+        stale = self.get_stale_recommendations(repo_id)["data"]
+        risks = self.get_pr_risk_panel(repo_id, limit=20)["data"]
 
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -860,15 +932,15 @@ class ExtendedAnalytics:
         )
         contributors = self.get_contributors_filtered(
             repo_id, limit=15, days=days, author=author, state=state, start_date=start_date, end_date=end_date
-        )
+        )["data"]
         oldest = self.get_oldest_open_filtered(
             repo_id, limit=10, days=days, author=author, state=state, start_date=start_date, end_date=end_date
-        )
+        )["data"]
         slowest = self.get_slowest_merged_filtered(
             repo_id, limit=10, days=days, author=author, state=state, start_date=start_date, end_date=end_date
-        )
-        stale = self.get_stale_recommendations(repo_id)
-        risks = self.get_pr_risk_panel(repo_id, limit=15)
+        )["data"]
+        stale = self.get_stale_recommendations(repo_id)["data"]
+        risks = self.get_pr_risk_panel(repo_id, limit=15)["data"]
 
         pdf = FPDF()
         pdf.set_margins(12, 12, 12)

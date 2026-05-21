@@ -24,43 +24,32 @@ class PRFilterParams:
     end_date: Optional[str] = None
 
 
-def get_filtered_prs(
+def get_filtered_prs_query(
     db: Session,
     repo_id: int,
     filters: Optional[PRFilterParams] = None,
-) -> List[PullRequest]:
+) -> Query:
     filters = filters or PRFilterParams()
     query: Query = db.query(PullRequest).filter(PullRequest.repo_id == repo_id)
 
-    is_stale_filter = False
     if filters.state and filters.state.upper() != "ALL":
         if filters.state.upper() == "STALE":
             query = query.filter(PullRequest.state == "OPEN")
-            is_stale_filter = True
+            cutoff = datetime.utcnow() - timedelta(days=30)
+            query = query.filter(PullRequest.created_at < cutoff)
         else:
             query = query.filter(PullRequest.state == filters.state.upper())
+            
     if filters.author and filters.author.lower() != "all":
         query = query.filter(PullRequest.author == filters.author)
-
-    prs = query.all()
-
-    if is_stale_filter:
-        cutoff = ensure_utc(datetime.utcnow()) - timedelta(days=30)
-        prs = [
-            p for p in prs
-            if p.created_at and ensure_utc(p.created_at) < cutoff
-        ]
 
     if filters.start_date:
         try:
             start_date_str = filters.start_date
             if len(start_date_str) == 10:
                 start_date_str += "T00:00:00"
-            start_dt = ensure_utc(datetime.fromisoformat(start_date_str))
-            prs = [
-                p for p in prs
-                if p.created_at and ensure_utc(p.created_at) >= start_dt
-            ]
+            start_dt = datetime.fromisoformat(start_date_str)
+            query = query.filter(PullRequest.created_at >= start_dt)
         except Exception:
             pass
 
@@ -69,22 +58,24 @@ def get_filtered_prs(
             end_date_str = filters.end_date
             if len(end_date_str) == 10:
                 end_date_str += "T23:59:59"
-            end_dt = ensure_utc(datetime.fromisoformat(end_date_str))
-            prs = [
-                p for p in prs
-                if p.created_at and ensure_utc(p.created_at) <= end_dt
-            ]
+            end_dt = datetime.fromisoformat(end_date_str)
+            query = query.filter(PullRequest.created_at <= end_dt)
         except Exception:
             pass
 
     if not filters.start_date and not filters.end_date and filters.days and filters.days > 0:
-        cutoff = ensure_utc(datetime.utcnow()) - timedelta(days=filters.days)
-        prs = [
-            p for p in prs
-            if p.created_at and ensure_utc(p.created_at) >= cutoff
-        ]
+        cutoff = datetime.utcnow() - timedelta(days=filters.days)
+        query = query.filter(PullRequest.created_at >= cutoff)
 
-    return prs
+    return query
+
+
+def get_filtered_prs(
+    db: Session,
+    repo_id: int,
+    filters: Optional[PRFilterParams] = None,
+) -> List[PullRequest]:
+    return get_filtered_prs_query(db, repo_id, filters).all()
 
 
 def pr_cycle_hours(pr: PullRequest) -> Optional[float]:

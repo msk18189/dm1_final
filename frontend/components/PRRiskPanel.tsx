@@ -17,7 +17,21 @@ interface PRRiskItem {
   _panel_note?: string
 }
 
-export default function PRRiskPanel({ data }: { data: PRRiskItem[] }) {
+interface PRRiskPanelProps {
+  data: PRRiskItem[]
+  page?: number
+  totalPages?: number
+  onPageChange?: (newPage: number) => void
+  totalResults?: number
+}
+
+export default function PRRiskPanel({
+  data,
+  page = 1,
+  totalPages,
+  onPageChange,
+  totalResults,
+}: PRRiskPanelProps) {
   if (!data?.length) {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full">
@@ -31,57 +45,89 @@ export default function PRRiskPanel({ data }: { data: PRRiskItem[] }) {
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full">
-      <div className="flex items-center gap-2 mb-4">
-        <Brain className="w-5 h-5 text-palette-rose" />
-        <h3 className="text-lg font-bold">PR Risk & Delay Predictions</h3>
-      </div>
-      <p className="section-subtitle mb-4">
-        {data[0]?._panel_note ||
-          (data[0]?.score_source === 'heuristic'
-            ? 'Rule-based risk estimates from PR age, reviews, and size (same signals as stale alerts). Train ML models for full predictions.'
-            : 'ML-powered risk scores for open PRs — higher risk may need attention')}
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-white/[0.06]">
-              <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-midnight-500">#</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Title</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Author</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Risk</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Bottleneck</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Est. delay</th>
-              <th className="px-3 py-2 text-left text-xs text-gray-400">Est. review wait</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((pr) => (
-              <tr key={pr.number} className="border-b border-brown-100 transition hover:bg-brown-50">
-                <td className="px-3 py-2 text-sm text-midnight-200">{pr.number}</td>
-                <td className="px-3 py-2 text-sm max-w-xs truncate">{pr.title}</td>
-                <td className="px-3 py-2 text-sm">{pr.author}</td>
-                <td className={`px-3 py-2 text-sm font-bold ${riskColor(pr.risk_score)}`}>
-                  {pr.risk_score}%
-                </td>
-                <td className="px-3 py-2 text-sm">{pr.bottleneck_probability}%</td>
-                <td className="px-3 py-2 text-sm">
-                  {pr.predicted_delay_display
-                    ? `${pr.predicted_delay_display.value} ${pr.predicted_delay_display.unit}`
-                    : pr.predicted_delay_days != null
-                    ? `${pr.predicted_delay_days} days`
-                    : '—'}
-                </td>
-                <td className="px-3 py-2 text-sm">
-                  {pr.predicted_review_wait_hours != null
-                    ? `${pr.predicted_review_wait_hours} hrs`
-                    : '—'}
-                </td>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full flex flex-col justify-between">
+      <div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
+          <div className="flex items-center gap-2">
+            <Brain className="w-5 h-5 text-palette-rose" />
+            <h3 className="text-lg font-bold">PR Risk & Delay Predictions</h3>
+          </div>
+          {totalResults !== undefined && (
+            <span className="text-xs text-midnight-400 font-medium">
+              Total: {totalResults.toLocaleString()} records
+            </span>
+          )}
+        </div>
+        <p className="section-subtitle mb-4">
+          {data[0]?._panel_note ||
+            (data[0]?.score_source === 'heuristic'
+              ? 'Rule-based risk estimates from PR age, reviews, and size (same signals as stale alerts). Train ML models for full predictions.'
+              : 'ML-powered risk scores for open PRs — higher risk may need attention')}
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-midnight-500">#</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Title</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Author</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Risk</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Bottleneck</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Est. delay</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-400">Est. review wait</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((pr) => (
+                <tr key={pr.number} className="border-b border-brown-100 transition hover:bg-brown-50">
+                  <td className="px-3 py-2 text-sm text-midnight-200">{pr.number}</td>
+                  <td className="px-3 py-2 text-sm max-w-xs truncate">{pr.title}</td>
+                  <td className="px-3 py-2 text-sm">{pr.author}</td>
+                  <td className={`px-3 py-2 text-sm font-bold ${riskColor(pr.risk_score)}`}>
+                    {pr.risk_score}%
+                  </td>
+                  <td className="px-3 py-2 text-sm">{pr.bottleneck_probability}%</td>
+                  <td className="px-3 py-2 text-sm">
+                    {pr.predicted_delay_display
+                      ? `${pr.predicted_delay_display.value} ${pr.predicted_delay_display.unit}`
+                      : pr.predicted_delay_days != null
+                      ? `${pr.predicted_delay_days} days`
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-sm">
+                    {pr.predicted_review_wait_hours != null
+                      ? `${pr.predicted_review_wait_hours} hrs`
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      {totalPages !== undefined && onPageChange && totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between border-t border-white/[0.04] pt-4">
+          <button
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1}
+            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="text-xs text-midnight-300">
+            Page <span className="font-semibold text-emerald-400">{page}</span> of{' '}
+            <span className="font-semibold">{totalPages}</span>
+          </span>
+          <button
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages}
+            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </motion.div>
   )
 }

@@ -31,6 +31,7 @@ import {
   getAuthors,
   getPRRisk,
   getStaleAlerts,
+  getSyncStatus,
 } from '@/lib/api'
 import { formatDurationDisplay, formatDurationFromDays } from '@/lib/format'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
@@ -44,6 +45,12 @@ import {
   MessageSquare,
   GitMerge,
   AlertOctagon,
+  RefreshCw,
+  Database,
+  CheckCircle2,
+  XCircle,
+  Info,
+  Zap,
 } from 'lucide-react'
 
 const defaultFilters: DashboardFiltersState = {
@@ -74,6 +81,35 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<NavSection>('analyze')
   const [authUser, setAuthUser] = useState<string | null>(null)
 
+  // Paginated states
+  const [oldestData, setOldestData] = useState<any[]>([])
+  const [oldestPage, setOldestPage] = useState(1)
+  const [oldestTotalPages, setOldestTotalPages] = useState(1)
+  const [oldestTotalResults, setOldestTotalResults] = useState(0)
+
+  const [slowestData, setSlowestData] = useState<any[]>([])
+  const [slowestPage, setSlowestPage] = useState(1)
+  const [slowestTotalPages, setSlowestTotalPages] = useState(1)
+  const [slowestTotalResults, setSlowestTotalResults] = useState(0)
+
+  const [contributorsData, setContributorsData] = useState<any[]>([])
+  const [contributorsPage, setContributorsPage] = useState(1)
+  const [contributorsTotalPages, setContributorsTotalPages] = useState(1)
+  const [contributorsTotalResults, setContributorsTotalResults] = useState(0)
+
+  const [prRiskData, setPRRiskData] = useState<any[]>([])
+  const [prRiskPage, setPRRiskPage] = useState(1)
+  const [prRiskTotalPages, setPRRiskTotalPages] = useState(1)
+  const [prRiskTotalResults, setPRRiskTotalResults] = useState(0)
+
+  const [staleAlertsData, setStaleAlertsData] = useState<any[]>([])
+  const [staleAlertsPage, setStaleAlertsPage] = useState(1)
+  const [staleAlertsTotalPages, setStaleAlertsTotalPages] = useState(1)
+  const [staleAlertsTotalResults, setStaleAlertsTotalResults] = useState(0)
+
+  // Sync status
+  const [syncStatus, setSyncStatus] = useState<any>(null)
+
   useEffect(() => {
     setGithubToken(loadGithubToken())
     setAuthUser(getAuthUser())
@@ -90,33 +126,32 @@ export default function Home() {
   }
 
   const loadDashboardData = useCallback(
-    async (id: number, activeFilters: DashboardFiltersState = defaultFilters) => {
+    async (id: number, activeFilters: DashboardFiltersState = defaultFilters, silent: boolean = false) => {
+      if (!silent) setIsLoading(true)
       try {
         const [
           kpi,
-          oldest,
-          slowest,
-          contributors,
+          oldestRes,
+          slowestRes,
+          contributorsRes,
           monthlyFlow,
           throughput,
-          prRisk,
-          staleAlerts,
+          prRiskRes,
+          staleAlertsRes,
           authorList,
         ] = await Promise.all([
           getKPI(id, activeFilters),
-          getOldestPRs(id, 10, activeFilters),
-          getSlowestPRs(id, 10, activeFilters),
-          getContributorActivity(id, activeFilters),
+          getOldestPRs(id, oldestPage, 10, activeFilters),
+          getSlowestPRs(id, slowestPage, 10, activeFilters),
+          getContributorActivity(id, contributorsPage, 10, activeFilters),
           getMonthlyFlow(id, 6, activeFilters),
           getThroughput(id, 8, activeFilters),
-          getPRRisk(id),
-          getStaleAlerts(id),
+          getPRRisk(id, prRiskPage, 15),
+          getStaleAlerts(id, staleAlertsPage, 10),
           getAuthors(id),
         ])
 
-        console.log('ML prediction data loaded:', prRisk)
-
-        const reviewTurnaround = contributors.map((c: any) => ({
+        const reviewTurnaround = (contributorsRes.data || []).map((c: any) => ({
           username: c.username,
           avg_wait_hours: (c.avg_wait_for_review || 0) * 24,
         }))
@@ -124,32 +159,170 @@ export default function Home() {
         setAuthors(authorList)
         setData({
           kpi,
-          oldest,
-          slowest,
-          contributors,
           monthlyFlow,
           throughput,
           reviewTurnaround,
-          prRisk,
-          staleAlerts,
         })
-        setActiveSection('overview')
+
+        // Paginated states updates
+        setOldestData(oldestRes.data || [])
+        setOldestPage(oldestRes.page || 1)
+        setOldestTotalPages(oldestRes.pages || 1)
+        setOldestTotalResults(oldestRes.total || 0)
+
+        setSlowestData(slowestRes.data || [])
+        setSlowestPage(slowestRes.page || 1)
+        setSlowestTotalPages(slowestRes.pages || 1)
+        setSlowestTotalResults(slowestRes.total || 0)
+
+        setContributorsData(contributorsRes.data || [])
+        setContributorsPage(contributorsRes.page || 1)
+        setContributorsTotalPages(contributorsRes.pages || 1)
+        setContributorsTotalResults(contributorsRes.total || 0)
+
+        setPRRiskData(prRiskRes.data || [])
+        setPRRiskPage(prRiskRes.page || 1)
+        setPRRiskTotalPages(prRiskRes.pages || 1)
+        setPRRiskTotalResults(prRiskRes.total || 0)
+
+        setStaleAlertsData(staleAlertsRes.data || [])
+        setStaleAlertsPage(staleAlertsRes.page || 1)
+        setStaleAlertsTotalPages(staleAlertsRes.pages || 1)
+        setStaleAlertsTotalResults(staleAlertsRes.total || 0)
+
+        if (!silent) setActiveSection('overview')
       } catch (err: unknown) {
-        setError(formatApiError(err) || 'Failed to load dashboard data')
+        if (!silent) setError(formatApiError(err) || 'Failed to load dashboard data')
+      } finally {
+        if (!silent) setIsLoading(false)
       }
     },
-    []
+    [oldestPage, slowestPage, contributorsPage, prRiskPage, staleAlertsPage]
   )
+
+  // Sync status polling effect
+  useEffect(() => {
+    if (!repoId) return
+
+    let intervalId: any = null
+
+    const checkStatus = async () => {
+      try {
+        const status = await getSyncStatus(repoId)
+        setSyncStatus(status)
+        
+        // If sync has completed or failed, we clear the timer and run a final reload
+        if (status.sync_status !== 'SYNCING') {
+          if (intervalId) {
+            clearInterval(intervalId)
+            intervalId = null
+          }
+          // Do a final visible refresh of all metrics
+          loadDashboardData(repoId, filters, false)
+        } else {
+          // Silent polling load to update the charts/lists dynamically in background
+          loadDashboardData(repoId, filters, true)
+        }
+      } catch (err) {
+        console.error("Error polling sync status:", err)
+      }
+    }
+
+    checkStatus()
+    intervalId = setInterval(checkStatus, 3000)
+
+    return () => {
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [repoId, filters, loadDashboardData])
+
+  // Page changes handlers
+  const handleOldestPRsPageChange = async (newPage: number) => {
+    if (!repoId) return
+    try {
+      const res = await getOldestPRs(repoId, newPage, 10, filters)
+      setOldestData(res.data || [])
+      setOldestPage(res.page || 1)
+      setOldestTotalPages(res.pages || 1)
+      setOldestTotalResults(res.total || 0)
+    } catch (err) {
+      setError(formatApiError(err))
+    }
+  }
+
+  const handleSlowestPRsPageChange = async (newPage: number) => {
+    if (!repoId) return
+    try {
+      const res = await getSlowestPRs(repoId, newPage, 10, filters)
+      setSlowestData(res.data || [])
+      setSlowestPage(res.page || 1)
+      setSlowestTotalPages(res.pages || 1)
+      setSlowestTotalResults(res.total || 0)
+    } catch (err) {
+      setError(formatApiError(err))
+    }
+  }
+
+  const handleContributorsPageChange = async (newPage: number) => {
+    if (!repoId) return
+    try {
+      const res = await getContributorActivity(repoId, newPage, 10, filters)
+      setContributorsData(res.data || [])
+      setContributorsPage(res.page || 1)
+      setContributorsTotalPages(res.pages || 1)
+      setContributorsTotalResults(res.total || 0)
+    } catch (err) {
+      setError(formatApiError(err))
+    }
+  }
+
+  const handlePRRiskPageChange = async (newPage: number) => {
+    if (!repoId) return
+    try {
+      const res = await getPRRisk(repoId, newPage, 15)
+      setPRRiskData(res.data || [])
+      setPRRiskPage(res.page || 1)
+      setPRRiskTotalPages(res.pages || 1)
+      setPRRiskTotalResults(res.total || 0)
+    } catch (err) {
+      setError(formatApiError(err))
+    }
+  }
+
+  const handleStaleAlertsPageChange = async (newPage: number) => {
+    if (!repoId) return
+    try {
+      const res = await getStaleAlerts(repoId, newPage, 10)
+      setStaleAlertsData(res.data || [])
+      setStaleAlertsPage(res.page || 1)
+      setStaleAlertsTotalPages(res.pages || 1)
+      setStaleAlertsTotalResults(res.total || 0)
+    } catch (err) {
+      setError(formatApiError(err))
+    }
+  }
 
   const handleAnalyze = async (url: string, token?: string) => {
     setIsLoading(true)
     setError(null)
     setRepoUrl(url)
     setFilters(defaultFilters)
+
+    // Reset pagination to 1 for all views
+    setOldestPage(1)
+    setSlowestPage(1)
+    setContributorsPage(1)
+    setPRRiskPage(1)
+    setStaleAlertsPage(1)
+
     try {
       const result = await analyzeRepository(url, token)
       setRepoId(result.repo_id)
-      await loadDashboardData(result.repo_id, defaultFilters)
+
+      const status = await getSyncStatus(result.repo_id)
+      setSyncStatus(status)
+
+      await loadDashboardData(result.repo_id, defaultFilters, false)
     } catch (err: unknown) {
       setError(formatApiError(err))
     } finally {
@@ -247,6 +420,105 @@ export default function Home() {
             </p>
           </div>
 
+          {syncStatus && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="card card-glow mb-8 bg-white/[0.02] border-white/[0.06] backdrop-blur-xl p-6"
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-3 mb-2">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Database className="w-5 h-5 text-indigo-400" />
+                      Repository Sync Status
+                    </h3>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                      syncStatus.sync_status === 'SYNCING'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        : syncStatus.sync_status === 'COMPLETED'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                        : syncStatus.sync_status === 'FAILED'
+                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
+                    }`}>
+                      {syncStatus.sync_status === 'SYNCING' && <RefreshCw className="w-3 h-3 animate-spin" />}
+                      {syncStatus.sync_status === 'COMPLETED' && <CheckCircle2 className="w-3 h-3" />}
+                      {syncStatus.sync_status === 'FAILED' && <XCircle className="w-3 h-3" />}
+                      {syncStatus.sync_status === 'IDLE' && <Info className="w-3 h-3" />}
+                      {syncStatus.sync_status}
+                    </span>
+                    <span className="text-xs bg-white/[0.04] text-midnight-300 border border-white/[0.08] px-3 py-1 rounded-full font-medium">
+                      Scope: Full Repository Ingestion
+                    </span>
+                  </div>
+                  <p className="text-sm text-midnight-200 mb-4 font-medium">
+                    {syncStatus.sync_progress || 'No sync currently active.'}
+                  </p>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 border-t border-white/[0.04] pt-4">
+                    <div>
+                      <p className="text-xs text-midnight-400 uppercase tracking-wider">Total PRs in Database</p>
+                      <p className="text-lg font-bold text-white mt-0.5">{syncStatus.total_prs?.toLocaleString() ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-midnight-400 uppercase tracking-wider">Last Sync Time</p>
+                      <p className="text-sm font-semibold text-white mt-1">
+                        {syncStatus.last_successful_sync 
+                          ? new Date(syncStatus.last_successful_sync).toLocaleString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })
+                          : 'Never'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-midnight-400 uppercase tracking-wider">GitHub API Budget</p>
+                      <p className="text-sm font-semibold text-white mt-1">
+                        {syncStatus.rate_limit_remaining !== null 
+                          ? `${syncStatus.rate_limit_remaining.toLocaleString()} / ${syncStatus.rate_limit_limit?.toLocaleString()}`
+                          : 'Unknown'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-midnight-400 uppercase tracking-wider">API Budget Reset</p>
+                      <p className="text-sm font-semibold text-white mt-1">
+                        {syncStatus.rate_limit_reset
+                          ? new Date(syncStatus.rate_limit_reset).toLocaleTimeString('en-US', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })
+                          : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {syncStatus.sync_status === 'FAILED' && syncStatus.error_message && (
+                    <div className="mt-4 p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-xs">
+                      <strong>Sync Failure Reason:</strong> {syncStatus.error_message}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex flex-col items-stretch md:items-end justify-center gap-2">
+                  <button
+                    disabled={syncStatus.sync_status === 'SYNCING' || isLoading}
+                    onClick={() => handleAnalyze(repoUrl, githubToken)}
+                    className="btn-primary rounded-xl px-5 py-2.5 text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/10"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${(syncStatus.sync_status === 'SYNCING' || isLoading) ? 'animate-spin' : ''}`} />
+                    {syncStatus.sync_status === 'SYNCING' ? 'Syncing...' : 'Sync Now'}
+                  </button>
+                  <span className="text-[10px] text-midnight-400 text-center md:text-right font-medium">
+                    * Removes pagination limits & fetches full history
+                  </span>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           <section id="section-overview" className="scroll-mt-8 mb-10">
             <DashboardFilters
               authors={authors}
@@ -328,8 +600,20 @@ export default function Home() {
 
           <section id="section-insights" className="scroll-mt-8 mb-10 space-y-6">
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <StalePRAlerts data={data.staleAlerts} />
-              <PRRiskPanel data={data.prRisk} />
+              <StalePRAlerts
+                data={staleAlertsData}
+                page={staleAlertsPage}
+                totalPages={staleAlertsTotalPages}
+                totalResults={staleAlertsTotalResults}
+                onPageChange={handleStaleAlertsPageChange}
+              />
+              <PRRiskPanel
+                data={prRiskData}
+                page={prRiskPage}
+                totalPages={prRiskTotalPages}
+                totalResults={prRiskTotalResults}
+                onPageChange={handlePRRiskPageChange}
+              />
             </div>
           </section>
 
@@ -338,7 +622,7 @@ export default function Home() {
               <MonthlyFlowChart data={data.monthlyFlow} />
               <ThroughputChart data={data.throughput} />
             </div>
-            <ContributorChart data={data.contributors} />
+            <ContributorChart data={contributorsData} />
             <ReviewTurnaroundChart data={data.reviewTurnaround} />
           </section>
 
@@ -364,7 +648,11 @@ export default function Home() {
                     },
                   },
                 ]}
-                data={data.oldest}
+                data={oldestData}
+                page={oldestPage}
+                totalPages={oldestTotalPages}
+                totalResults={oldestTotalResults}
+                onPageChange={handleOldestPRsPageChange}
               />
               <DataTable
                 title="Slowest merged PRs"
@@ -395,7 +683,11 @@ export default function Home() {
                     },
                   },
                 ]}
-                data={data.slowest}
+                data={slowestData}
+                page={slowestPage}
+                totalPages={slowestTotalPages}
+                totalResults={slowestTotalResults}
+                onPageChange={handleSlowestPRsPageChange}
               />
             </div>
             <DataTable
@@ -415,7 +707,11 @@ export default function Home() {
                 },
                 { key: 'merge_rate', label: 'Merge %' },
               ]}
-              data={data.contributors}
+              data={contributorsData}
+              page={contributorsPage}
+              totalPages={contributorsTotalPages}
+              totalResults={contributorsTotalResults}
+              onPageChange={handleContributorsPageChange}
             />
           </section>
         </>

@@ -67,32 +67,36 @@ export const getKPI = async (repoId: number, filters?: DashboardFiltersState) =>
 
 export const getOldestPRs = async (
   repoId: number,
+  page: number = 1,
   limit: number = 10,
   filters?: DashboardFiltersState
 ) => {
   const response = await api.get(`/api/oldest-prs/${repoId}`, {
-    params: { limit, ...filterParams(filters) },
+    params: { page, limit, ...filterParams(filters) },
   })
   return response.data
 }
 
 export const getSlowestPRs = async (
   repoId: number,
+  page: number = 1,
   limit: number = 10,
   filters?: DashboardFiltersState
 ) => {
   const response = await api.get(`/api/slowest-prs/${repoId}`, {
-    params: { limit, ...filterParams(filters) },
+    params: { page, limit, ...filterParams(filters) },
   })
   return response.data
 }
 
 export const getContributorActivity = async (
   repoId: number,
+  page: number = 1,
+  limit: number = 10,
   filters?: DashboardFiltersState
 ) => {
   const response = await api.get(`/api/contributor-activity/${repoId}`, {
-    params: filterParams(filters),
+    params: { page, limit, ...filterParams(filters) },
   })
   return response.data
 }
@@ -124,14 +128,36 @@ export const getAuthors = async (repoId: number) => {
   return response.data.authors as string[]
 }
 
-export const getPRRisk = async (repoId: number) => {
-  const response = await api.get(`/api/pr-risk/${repoId}`)
+export const getPRRisk = async (repoId: number, page: number = 1, limit: number = 15) => {
+  const response = await api.get(`/api/pr-risk/${repoId}`, {
+    params: { page, limit },
+  })
   return response.data
 }
 
-export const getStaleAlerts = async (repoId: number) => {
-  const response = await api.get(`/api/stale-alerts/${repoId}`)
+export const getStaleAlerts = async (repoId: number, page: number = 1, limit: number = 10) => {
+  const response = await api.get(`/api/stale-alerts/${repoId}`, {
+    params: { page, limit },
+  })
   return response.data
+}
+
+export const getSyncStatus = async (repoId: number) => {
+  const response = await api.get(`/api/sync-status/${repoId}`)
+  return response.data as {
+    id: number
+    owner: string
+    name: string
+    sync_status: 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED'
+    sync_progress: string | null
+    last_synced_at: string | null
+    last_successful_sync: string | null
+    total_prs: number
+    error_message: string | null
+    rate_limit_remaining: number | null
+    rate_limit_limit: number | null
+    rate_limit_reset: string | null
+  }
 }
 
 export const compareRepositories = async (

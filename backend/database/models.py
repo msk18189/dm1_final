@@ -32,6 +32,15 @@ class Repository(Base):
     last_synced = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    sync_status = Column(String(50), default="IDLE", nullable=False)
+    sync_progress = Column(String(255), nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_successful_sync = Column(DateTime, nullable=True)
+    total_prs = Column(Integer, default=0, nullable=False)
+    error_message = Column(Text, nullable=True)
+    rate_limit_remaining = Column(Integer, nullable=True)
+    rate_limit_limit = Column(Integer, nullable=True)
+    rate_limit_reset = Column(DateTime, nullable=True)
 
     analyses = relationship("TotalAnalysis", back_populates="repository")
     pull_requests = relationship("PullRequest", back_populates="repository")
@@ -87,6 +96,7 @@ class PullRequest(Base):
     cycle_time_days = Column(Float, nullable=True)
     wait_for_review_hours = Column(Float, nullable=True)
     review_duration_hours = Column(Float, nullable=True)
+    updated_at = Column(DateTime, nullable=True, index=True)
 
     repository = relationship("Repository", back_populates="pull_requests")
 

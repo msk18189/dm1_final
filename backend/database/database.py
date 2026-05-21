@@ -81,6 +81,57 @@ def init_db():
     from `Base`. If the database does not exist, SQLAlchemy will try to create it.
     """
     Base.metadata.create_all(bind=engine)
+    
+    # Self-healing migration: Add missing columns if they don't exist
+    from sqlalchemy import inspect, text
+    try:
+        inspector = inspect(engine)
+        
+        # Check repositories table columns
+        if "repositories" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("repositories")}
+            new_cols = {
+                "sync_status": "VARCHAR(50) DEFAULT 'IDLE'",
+                "sync_progress": "VARCHAR(255)",
+                "last_synced_at": "DATETIME",
+                "last_successful_sync": "DATETIME",
+                "total_prs": "INTEGER DEFAULT 0",
+                "error_message": "TEXT",
+                "rate_limit_remaining": "INTEGER",
+                "rate_limit_limit": "INTEGER",
+                "rate_limit_reset": "DATETIME",
+            }
+            with engine.connect() as conn:
+                for col, sql_type in new_cols.items():
+                    if col not in existing_cols:
+                        try:
+                            conn.execute(text(f"ALTER TABLE repositories ADD COLUMN {col} {sql_type}"))
+                            # SQLite or SQLAlchemy 2.0 might auto-commit or require transaction commits.
+                            # Calling conn.commit() is safe on connection objects in SQLAlchemy 2.0.
+                            try:
+                                conn.commit()
+                            except Exception:
+                                pass
+                            print(f"[Schema Ingestion] Added column '{col}' to 'repositories' table.")
+                        except Exception as inner:
+                            print(f"[Schema Warning] Failed to add column '{col}' to 'repositories': {inner}")
+                            
+        # Check pull_requests table columns
+        if "pull_requests" in inspector.get_table_names():
+            existing_cols = {c["name"] for c in inspector.get_columns("pull_requests")}
+            if "updated_at" not in existing_cols:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text("ALTER TABLE pull_requests ADD COLUMN updated_at DATETIME"))
+                        try:
+                            conn.commit()
+                        except Exception:
+                            pass
+                        print("[Schema Ingestion] Added column 'updated_at' to 'pull_requests' table.")
+                    except Exception as inner:
+                        print(f"[Schema Warning] Failed to add column 'updated_at' to 'pull_requests': {inner}")
+    except Exception as e:
+        print(f"[Schema Warning] Error during self-healing migrations: {e}")
 
 
 def get_db():

@@ -54,8 +54,7 @@ class DataProcessor:
         try:
             # Parse URL
             owner, repo_name = parse_github_repo_url(repo_url)
-            
-            print(f"[1/6] Processing repository: {owner}/{repo_name}")
+            print(f"Starting repository ingestion: {owner}/{repo_name}")
             
             # Check if repo exists in DB
             canonical_url = normalize_github_url(owner, repo_name)
@@ -74,71 +73,92 @@ class DataProcessor:
                     source_url=repo_url,
                     stars=0,
                     last_synced=datetime.utcnow(),
+                    sync_status="SYNCING",
+                    sync_progress="Initializing sync...",
                 )
                 self.db.add(repo)
-                try:
-                    self.db.commit()
-                    print(f"[2/6] Created new repository record: {repo.id}")
-                except IntegrityError:
-                    self.db.rollback()
-                    repo = self.db.query(Repository).filter(
-                        Repository.full_name == full_name
-                    ).first()
-                    if not repo:
-                        raise
-                    repo.url = canonical_url
-                    repo.source_url = repo.source_url or repo_url
-                    repo.last_synced = datetime.utcnow()
-                    self.db.commit()
-                    print(f"[2/6] Recovered existing repository record: {repo.id}")
+                self.db.commit()
+                print(f"Created new repository record: {repo.id}")
             else:
                 repo.full_name = repo.full_name or f"{owner}/{repo_name}"
                 repo.url = canonical_url
                 repo.source_url = repo_url
-                repo.last_synced = datetime.utcnow()
-                print(f"[2/6] Using existing repository record: {repo.id}")
-            
-            # Fetch PR data from GitHub (user token overrides env for this run)
+                repo.sync_status = "SYNCING"
+                repo.sync_progress = "Initializing sync..."
+                self.db.commit()
+                print(f"Using existing repository record: {repo.id}")
+                
+            # Initialize GitHub client
             client = GitHubClient(token=github_token.strip() if github_token else None)
-            print(f"[3/6] Fetching PRs from GitHub...")
-            raw_prs = client.fetch_pull_requests(owner, repo_name, first=50)
-            print(f"[3/6] Fetched {len(raw_prs)} PRs from GitHub")
             
-            existing_count = self.db.query(PullRequest).filter(
-                PullRequest.repo_id == repo.id
-            ).count()
-
-            if len(raw_prs) == 0:
-                if existing_count > 0:
-                    print(f"[INFO] No new PRs from API; using {existing_count} cached PRs")
-                    self._update_contributor_stats(repo.id)
-                    self._update_total_analysis(repo)
-                    self.db.commit()
-                    return {
-                        "owner": owner,
-                        "repo": repo_name,
-                        "prs_processed": 0,
-                        "repo_id": repo.id,
-                        "total_prs": existing_count,
-                    }
-                raise Exception(
-                    "No pull requests found. The repo may have no PRs yet, "
-                    "or your GitHub token cannot access it."
+            # Pagination loop
+            cursor = None
+            has_next = True
+            total_fetched = 0
+            new_prs_stored = 0
+            updated_prs_stored = 0
+            
+            last_successful_sync = repo.last_successful_sync
+            if last_successful_sync:
+                # Ensure UTC timezone info
+                if last_successful_sync.tzinfo is None:
+                    last_successful_sync = last_successful_sync.replace(tzinfo=timezone.utc)
+                print(f"Incremental sync active. Last successful sync: {last_successful_sync}")
+                
+            stop_incremental = False
+            
+            # We fetch pages in a loop
+            while has_next and not stop_incremental:
+                repo.sync_progress = f"Fetching PRs (Fetched {total_fetched} so far)..."
+                self.db.commit()
+                
+                print(f"Fetching page with cursor: {cursor}")
+                raw_prs, page_info, rate_limit = client.fetch_pull_requests(
+                    owner, repo_name, first=50, cursor=cursor
                 )
-            
-            # Process and store PRs
-            pr_count = 0
-            for idx, raw_pr in enumerate(raw_prs):
-                try:
+                
+                # Update rate limits on repo
+                if rate_limit:
+                    repo.rate_limit_remaining = rate_limit.get("remaining")
+                    repo.rate_limit_limit = rate_limit.get("limit")
+                    reset_at_str = rate_limit.get("resetAt")
+                    if reset_at_str:
+                        repo.rate_limit_reset = datetime.fromisoformat(reset_at_str.replace("Z", "+00:00"))
+                
+                if not raw_prs:
+                    print("No PRs returned in page.")
+                    break
+                    
+                total_fetched += len(raw_prs)
+                print(f"Fetched {len(raw_prs)} PRs. Total fetched in this run: {total_fetched}")
+                
+                # Process PRs in the current page
+                for raw_pr in raw_prs:
                     parsed_pr = client.parse_pr_data(raw_pr)
                     
+                    # Incremental sync check
+                    pr_updated_at = parsed_pr.get("updated_at")
+                    if pr_updated_at and pr_updated_at.tzinfo is None:
+                        pr_updated_at = pr_updated_at.replace(tzinfo=timezone.utc)
+                        
                     # Check if PR exists
                     existing_pr = self.db.query(PullRequest).filter(
                         PullRequest.repo_id == repo.id,
                         PullRequest.pr_number == parsed_pr["number"]
                     ).first()
                     
+                    # Stop condition:
+                    # If we are doing incremental sync, and the current PR has an updated_at
+                    # older than last_successful_sync - 1 day, AND we already have it in the DB,
+                    # we can stop pagination!
+                    if last_successful_sync and pr_updated_at:
+                        if pr_updated_at < (last_successful_sync - timedelta(days=1)) and existing_pr:
+                            print(f"Incremental sync threshold reached at PR #{parsed_pr['number']} (updated at {pr_updated_at}). Stopping sync loop.")
+                            stop_incremental = True
+                            break
+                            
                     if existing_pr:
+                        # Update existing PR
                         existing_pr.repo_owner = owner
                         existing_pr.repo_name = repo_name
                         existing_pr.title = parsed_pr["title"][:200]
@@ -154,7 +174,10 @@ class DataProcessor:
                         existing_pr.cycle_time_days = parsed_pr["cycle_time_days"]
                         existing_pr.wait_for_review_hours = parsed_pr["wait_for_review_hours"]
                         existing_pr.review_duration_hours = parsed_pr["review_duration_hours"]
+                        existing_pr.updated_at = parsed_pr["updated_at"]
+                        updated_prs_stored += 1
                     else:
+                        # Create new PR
                         pr = PullRequest(
                             repo_id=repo.id,
                             repo_owner=owner,
@@ -175,39 +198,71 @@ class DataProcessor:
                             cycle_time_days=parsed_pr["cycle_time_days"],
                             wait_for_review_hours=parsed_pr["wait_for_review_hours"],
                             review_duration_hours=parsed_pr["review_duration_hours"],
+                            updated_at=parsed_pr["updated_at"],
                         )
                         self.db.add(pr)
-                        self.db.flush()
+                        self.db.flush()  # get the PR id
                         existing_pr = pr
-                        pr_count += 1
-
+                        new_prs_stored += 1
+                        
+                    # Generate predictions
                     self._generate_predictions_safe(existing_pr, parsed_pr)
-
-                    if (idx + 1) % 10 == 0:
-                        print(f"[4/6] Processed {idx + 1}/{len(raw_prs)} PRs...")
-                except Exception as e:
-                    print(f"[WARN] Error processing PR {raw_pr.get('number')}: {str(e)}")
-                    continue
+                    
+                # Commit page database transactions to save progress
+                self.db.commit()
+                
+                # Setup for next page
+                has_next = page_info.get("hasNextPage", False)
+                cursor = page_info.get("endCursor")
+                
+            # Once all PRs are processed/fetched:
+            repo.sync_status = "COMPLETED"
+            repo.sync_progress = f"Successfully synced {total_fetched} PRs. (New: {new_prs_stored}, Updated: {updated_prs_stored})"
+            repo.last_synced_at = datetime.utcnow()
+            repo.last_successful_sync = datetime.utcnow()
+            repo.total_prs = self.db.query(PullRequest).filter(PullRequest.repo_id == repo.id).count()
+            repo.error_message = None
+            self.db.commit()
             
-            print(f"[4/6] Stored {pr_count} new PRs in database")
+            # Update contributor statistics and total analysis
+            print("Updating contributor stats and overall analysis metrics...")
+            repo.sync_progress = "Updating statistics & analysis..."
+            self.db.commit()
             
-            # Update contributor stats
-            print(f"[5/6] Updating contributor statistics...")
             self._update_contributor_stats(repo.id, repo)
             self._update_total_analysis(repo)
             
+            repo.sync_progress = f"Sync completed. Total PRs: {repo.total_prs}."
             self.db.commit()
-            print(f"[6/6] [SUCCESS] Successfully processed {pr_count} PRs for {owner}/{repo_name}")
             
+            print(f"Sync successfully completed for {owner}/{repo_name}")
             return {
                 "owner": owner,
                 "repo": repo_name,
-                "prs_processed": pr_count,
-                "repo_id": repo.id
+                "prs_processed": new_prs_stored + updated_prs_stored,
+                "repo_id": repo.id,
+                "total_prs": repo.total_prs
             }
+            
         except Exception as e:
-            print(f"[FATAL ERROR] {str(e)}")
+            error_msg = str(e)
+            print(f"Error processing repository: {error_msg}")
             self.db.rollback()
+            
+            # Update repository record to mark as failed
+            try:
+                owner, repo_name = parse_github_repo_url(repo_url)
+                repo = self.db.query(Repository).filter(
+                    Repository.owner == owner,
+                    Repository.name == repo_name
+                ).first()
+                if repo:
+                    repo.sync_status = "FAILED"
+                    repo.error_message = error_msg
+                    self.db.commit()
+            except Exception as inner:
+                print(f"Failed to update repository error state: {inner}")
+                
             raise
     
     def _update_total_analysis(self, repo: Repository):
