@@ -23,32 +23,32 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-6 space-y-5">
+      <div className="rounded-2xl border border-warm-200 bg-white p-6 space-y-5 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10">
-            <Key className="h-4 w-4 text-indigo-300" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50">
+            <Key className="h-4 w-4 text-indigo-500" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">GitHub Token</h3>
-            <p className="text-xs text-white/40">Personal access token for higher rate limits (5000 req/hr)</p>
+            <h3 className="text-sm font-bold text-primary">GitHub Token</h3>
+            <p className="text-xs text-muted">Personal access token for higher rate limits (5000 req/hr)</p>
           </div>
         </div>
 
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-amber-300 text-xs flex gap-2">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800 text-xs flex gap-2">
           <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
           <span>PRISM works without a token for public repos. Adding a token enables large repository ingestion (100k+ PRs) without hitting rate limits.</span>
         </div>
 
         <div>
-          <label className="text-xs text-white/50 block mb-1.5">Personal Access Token</label>
+          <label className="text-xs text-secondary block mb-1.5">Personal Access Token</label>
           <input
             type="password"
             value={token}
             onChange={e => setToken(e.target.value)}
             placeholder="github_pat_..."
-            className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 text-sm text-white/80 placeholder:text-white/20 focus:outline-none focus:border-indigo-500/50 font-mono"
+            className="w-full rounded-xl bg-white border border-warm-200 px-3 py-2.5 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-indigo-500 font-mono"
           />
-          <p className="text-[10px] text-white/25 mt-1">
+          <p className="text-[10px] text-muted mt-1">
             Token scopes: public_repo or repo (private repos), read:project for Projects v2
           </p>
         </div>
@@ -59,14 +59,14 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
         </button>
       </div>
 
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-6 space-y-4">
+      <div className="rounded-2xl border border-warm-200 bg-white p-6 space-y-4 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/10">
-            <Database className="h-4 w-4 text-violet-300" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-50">
+            <Database className="h-4 w-4 text-violet-500" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">Platform Info</h3>
-            <p className="text-xs text-white/40">PRISM v2.0 — Enterprise GitHub Intelligence</p>
+            <h3 className="text-sm font-bold text-primary">Platform Info</h3>
+            <p className="text-xs text-muted">PRISM v2.0 — Enterprise GitHub Intelligence</p>
           </div>
         </div>
 
@@ -79,9 +79,9 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
             ['Modules', '9 intelligence modules'],
             ['Current Repo', repoLabel ?? 'None selected'],
           ].map(([k, v]) => (
-            <div key={k} className="rounded-xl bg-white/[0.03] border border-white/[0.04] p-3">
-              <p className="text-white/30 mb-0.5">{k}</p>
-              <p className="text-white/70 font-medium">{v}</p>
+            <div key={k} className="rounded-xl bg-warm-50/50 border border-warm-200 p-3">
+              <p className="text-muted mb-0.5">{k}</p>
+              <p className="text-secondary font-medium">{v}</p>
             </div>
           ))}
         </div>

@@ -143,7 +143,7 @@ export default function AppShell({
     <div className="flex min-h-screen bg-warm-50 p-3 sm:p-4">
 
       {/* ── Sidebar ── */}
-      <aside className="hidden w-[240px] shrink-0 flex-col rounded-shell bg-warm-900 p-4 text-white/90 shadow-shell lg:flex">
+      <aside className="hidden w-[240px] shrink-0 flex-col rounded-shell bg-white border border-warm-200 p-4 text-secondary shadow-shell lg:flex">
 
         {/* Logo */}
         <div className="mb-6 flex items-center gap-2.5 px-1">
@@ -151,16 +151,16 @@ export default function AppShell({
             <GitBranch className="h-4 w-4 text-white" />
           </div>
           <div>
-            <span className="text-lg font-bold tracking-tight text-white">PRISM</span>
-            <p className="text-[9px] font-medium uppercase tracking-widest text-white/40">Intelligence</p>
+            <span className="text-lg font-bold tracking-tight text-primary">PRISM</span>
+            <p className="text-[9px] font-medium uppercase tracking-widest text-muted">Intelligence</p>
           </div>
         </div>
 
         {/* Repo badge */}
         {repoLabel && (
-          <div className="mb-4 rounded-xl bg-white/[0.06] border border-white/[0.08] px-3 py-2.5">
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-white/40 mb-0.5">Repository</p>
-            <p className="truncate text-sm font-semibold text-white">{repoLabel}</p>
+          <div className="mb-4 rounded-xl bg-warm-50 border border-warm-200/60 px-3 py-2.5">
+            <p className="text-[9px] font-semibold uppercase tracking-wider text-muted mb-0.5">Repository</p>
+            <p className="truncate text-sm font-semibold text-primary">{repoLabel}</p>
           </div>
         )}
 
@@ -177,22 +177,22 @@ export default function AppShell({
                 onClick={() => navigate(item.id)}
                 className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
                   active
-                    ? 'bg-white/[0.12] text-white shadow-sm'
-                    : 'text-white/55 hover:bg-white/[0.07] hover:text-white/90'
+                    ? 'bg-warm-100 text-primary shadow-sm'
+                    : 'text-secondary hover:bg-warm-50 hover:text-primary'
                 }`}
               >
-                <span className={active ? 'text-indigo-300' : 'text-white/40 group-hover:text-white/70'}>
+                <span className={active ? 'text-indigo-600' : 'text-muted group-hover:text-secondary'}>
                   {item.icon}
                 </span>
                 <span className="flex-1 text-left">{item.label}</span>
                 {badge && (
                   <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                    active ? 'bg-indigo-500/40 text-indigo-200' : 'bg-white/[0.08] text-white/40'
+                    active ? 'bg-indigo-100 text-indigo-700' : 'bg-warm-200/50 text-muted'
                   }`}>
                     {badge}
                   </span>
                 )}
-                {active && <ChevronRight className="h-3 w-3 text-indigo-400 shrink-0" />}
+                {active && <ChevronRight className="h-3 w-3 text-indigo-500 shrink-0" />}
               </button>
             )
           })}
@@ -202,14 +202,14 @@ export default function AppShell({
         <button
           type="button"
           onClick={() => navigate('analyze')}
-          className="mt-4 flex items-center gap-2.5 rounded-xl border border-dashed border-white/20 bg-white/[0.04] px-3 py-3 text-left transition hover:border-indigo-500/50 hover:bg-white/[0.08]"
+          className="mt-4 flex items-center gap-2.5 rounded-xl border border-dashed border-warm-200 bg-warm-50 px-3 py-3 text-left transition hover:border-indigo-500/50 hover:bg-warm-100/50"
         >
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/80">
             <Plus className="h-3.5 w-3.5 text-white" />
           </div>
           <div>
-            <p className="text-xs font-semibold text-white/80">New Analysis</p>
-            <p className="text-[10px] text-white/35">Analyze another repo</p>
+            <p className="text-xs font-semibold text-primary">New Analysis</p>
+            <p className="text-[10px] text-muted">Analyze another repo</p>
           </div>
         </button>
       </aside>

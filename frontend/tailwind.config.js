@@ -51,6 +51,9 @@ module.exports = {
           lime: '#9AAF5C',
           rose: '#C75D5D',
         },
+        primary: '#1A1A1A',
+        secondary: '#4B5563',
+        muted: '#6B7280',
       },
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],

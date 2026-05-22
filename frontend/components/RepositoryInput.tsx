@@ -78,22 +78,22 @@ export default function RepositoryInput({
             <Search className="h-5 w-5 text-palette-emerald" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-midnight-50">Change repository</h2>
-            <p className="text-xs text-midnight-400">Run a new analysis</p>
+            <h2 className="text-base font-bold text-primary">Change repository</h2>
+            <p className="text-xs text-muted">Run a new analysis</p>
           </div>
         </div>
       )}
 
       {isHero && (
         <div className="mb-8 text-center space-y-2">
-          <h2 className="text-2xl font-bold tracking-tight text-midnight-50 sm:text-3xl">Analyze repository</h2>
-          <p className="text-base text-midnight-400">Paste a GitHub URL to start the repository analytics workflow</p>
+          <h2 className="text-2xl font-bold tracking-tight text-primary sm:text-3xl">Analyze repository</h2>
+          <p className="text-base text-secondary">Paste a GitHub URL to start the repository analytics workflow</p>
         </div>
       )}
 
       <div className={`mb-6 flex gap-3 rounded-2xl border border-warm-200 bg-warm-50 p-4 ${isHero ? 'border-palette-amber/20 bg-palette-amber-light/30' : 'border-palette-amber/20 bg-palette-amber-light/50'}`}>
         <Lock className="mt-0.5 h-5 w-5 shrink-0 text-palette-amber" />
-        <p className="text-xs leading-relaxed text-midnight-300 sm:text-sm">
+        <p className="text-xs leading-relaxed text-secondary sm:text-sm">
           Private repos need a{' '}
           <a
             href="https://github.com/settings/tokens"
@@ -103,17 +103,17 @@ export default function RepositoryInput({
           >
             PAT
           </a>{' '}
-          with <span className="font-medium text-midnight-100">repo</span> scope.
+          with <span className="font-medium text-primary">repo</span> scope.
         </p>
       </div>
 
       <div className={isHero ? 'space-y-6 sm:space-y-8' : 'space-y-4'}>
         <div>
-          <label className={`mb-2 block font-semibold uppercase tracking-wider text-midnight-400 ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
+          <label className={`mb-2 block font-semibold uppercase tracking-wider text-secondary ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
             Repository URL
           </label>
           <div className="relative">
-            <Github className={`absolute top-1/2 -translate-y-1/2 text-midnight-400 ${isHero ? 'h-6 w-6 left-5' : 'h-4 w-4 left-3.5'}`} />
+            <Github className={`absolute top-1/2 -translate-y-1/2 text-muted ${isHero ? 'h-6 w-6 left-5' : 'h-4 w-4 left-3.5'}`} />
             <input
               type="text"
               value={url}
@@ -131,9 +131,9 @@ export default function RepositoryInput({
         </div>
 
         <div>
-          <label className={`mb-2 flex items-center gap-1.5 font-semibold uppercase tracking-wider text-midnight-400 ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
+          <label className={`mb-2 flex items-center gap-1.5 font-semibold uppercase tracking-wider text-secondary ${isHero ? 'text-xs sm:text-sm' : 'text-[10px]'}`}>
             <KeyRound className={isHero ? 'h-4 w-4' : 'h-3 w-3'} />
-            Token <span className="normal-case font-normal text-midnight-500">(optional)</span>
+            Token <span className="normal-case font-normal text-muted">(optional)</span>
           </label>
           <input
             type="password"

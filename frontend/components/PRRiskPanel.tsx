@@ -37,9 +37,9 @@ export default function PRRiskPanel({
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full">
         <div className="flex items-center gap-2 mb-2">
           <Brain className="h-5 w-5 text-palette-orange" />
-          <h3 className="section-title">PR Risk & Delay Predictions</h3>
+          <h3 className="section-title text-primary">PR Risk & Delay Predictions</h3>
         </div>
-        <p className="text-sm text-midnight-400">No open PRs with ML predictions yet.</p>
+        <p className="text-sm text-muted">No open PRs with ML predictions yet.</p>
       </motion.div>
     )
   }
@@ -50,51 +50,51 @@ export default function PRRiskPanel({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
           <div className="flex items-center gap-2">
             <Brain className="w-5 h-5 text-palette-rose" />
-            <h3 className="text-lg font-bold">PR Risk & Delay Predictions</h3>
+            <h3 className="text-lg font-bold text-primary">PR Risk & Delay Predictions</h3>
           </div>
           {totalResults !== undefined && (
-            <span className="text-xs text-midnight-400 font-medium">
+            <span className="text-xs text-muted font-medium">
               Total: {totalResults.toLocaleString()} records
             </span>
           )}
         </div>
-        <p className="section-subtitle mb-4">
+        <p className="text-xs text-secondary mb-4">
           {data[0]?._panel_note ||
             (data[0]?.score_source === 'heuristic'
               ? 'Rule-based risk estimates from PR age, reviews, and size (same signals as stale alerts). Train ML models for full predictions.'
               : 'ML-powered risk scores for open PRs — higher risk may need attention')}
         </p>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-xl border border-warm-200">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/[0.06]">
-                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-midnight-500">#</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Title</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Author</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Risk</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Bottleneck</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Est. delay</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-400">Est. review wait</th>
+              <tr className="border-b border-warm-200 bg-warm-50/50">
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">#</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Title</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Author</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Risk</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Bottleneck</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Est. delay</th>
+                <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">Est. review wait</th>
               </tr>
             </thead>
             <tbody>
               {data.map((pr) => (
-                <tr key={pr.number} className="border-b border-brown-100 transition hover:bg-brown-50">
-                  <td className="px-3 py-2 text-sm text-midnight-200">{pr.number}</td>
-                  <td className="px-3 py-2 text-sm max-w-xs truncate">{pr.title}</td>
-                  <td className="px-3 py-2 text-sm">{pr.author}</td>
-                  <td className={`px-3 py-2 text-sm font-bold ${riskColor(pr.risk_score)}`}>
+                <tr key={pr.number} className="border-b border-warm-100 transition hover:bg-warm-50/40">
+                  <td className="px-3 py-2 font-mono text-xs text-muted">#{pr.number}</td>
+                  <td className="px-3 py-2 text-xs text-primary max-w-xs truncate">{pr.title}</td>
+                  <td className="px-3 py-2 text-xs text-secondary">{pr.author}</td>
+                  <td className={`px-3 py-2 text-xs font-bold ${riskColor(pr.risk_score)}`}>
                     {pr.risk_score}%
                   </td>
-                  <td className="px-3 py-2 text-sm">{pr.bottleneck_probability}%</td>
-                  <td className="px-3 py-2 text-sm">
+                  <td className="px-3 py-2 text-xs text-secondary">{pr.bottleneck_probability}%</td>
+                  <td className="px-3 py-2 text-xs text-secondary">
                     {pr.predicted_delay_display
                       ? `${pr.predicted_delay_display.value} ${pr.predicted_delay_display.unit}`
                       : pr.predicted_delay_days != null
                       ? `${pr.predicted_delay_days} days`
                       : '—'}
                   </td>
-                  <td className="px-3 py-2 text-sm">
+                  <td className="px-3 py-2 text-xs text-secondary">
                     {pr.predicted_review_wait_hours != null
                       ? `${pr.predicted_review_wait_hours} hrs`
                       : '—'}
@@ -107,22 +107,22 @@ export default function PRRiskPanel({
       </div>
 
       {totalPages !== undefined && onPageChange && totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between border-t border-white/[0.04] pt-4">
+        <div className="mt-4 flex items-center justify-between border-t border-warm-200 pt-4">
           <button
             onClick={() => onPageChange(Math.max(1, page - 1))}
             disabled={page <= 1}
-            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
           >
             Previous
           </button>
-          <span className="text-xs text-midnight-300">
-            Page <span className="font-semibold text-emerald-400">{page}</span> of{' '}
-            <span className="font-semibold">{totalPages}</span>
+          <span className="text-xs text-secondary">
+            Page <span className="font-semibold text-primary">{page}</span> of{' '}
+            <span className="font-semibold text-primary">{totalPages}</span>
           </span>
           <button
             onClick={() => onPageChange(Math.min(totalPages, page + 1))}
             disabled={page >= totalPages}
-            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
           >
             Next
           </button>

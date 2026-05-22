@@ -30,17 +30,17 @@ interface Props {
 }
 
 const statusColors = {
-  SYNCING: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  COMPLETED: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  FAILED: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
-  IDLE: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
+  SYNCING: 'bg-amber-50 text-amber-800 border-amber-200',
+  COMPLETED: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  FAILED: 'bg-rose-50 text-rose-800 border-rose-200',
+  IDLE: 'bg-indigo-50 text-indigo-800 border-indigo-200',
 }
 
 function MetricCell({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <p className="text-[10px] uppercase tracking-wider text-white/30 font-medium">{label}</p>
-      <p className="text-base font-bold text-white">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+      <p className="text-[10px] uppercase tracking-wider text-muted font-medium">{label}</p>
+      <p className="text-base font-bold text-primary">{typeof value === 'number' ? value.toLocaleString() : value}</p>
     </div>
   )
 }
@@ -60,14 +60,14 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
     <motion.div
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mb-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-xl p-5"
+      className="mb-6 rounded-2xl border border-warm-200 bg-white/80 backdrop-blur-xl p-5 shadow-sm"
     >
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
         {/* Left: status */}
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2.5 mb-2">
-            <Database className="h-4 w-4 text-indigo-400 shrink-0" />
-            <h3 className="text-sm font-bold text-white">{repoLabel}</h3>
+            <Database className="h-4 w-4 text-indigo-600 shrink-0" />
+            <h3 className="text-sm font-bold text-primary">{repoLabel}</h3>
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${statusColors[status] ?? statusColors.IDLE}`}>
               {status === 'SYNCING' && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
               {status === 'COMPLETED' && <CheckCircle2 className="w-2.5 h-2.5" />}
@@ -76,18 +76,18 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
               {status}
             </span>
             {syncStatus.initial_sync_completed && (
-              <span className="text-[10px] bg-white/[0.04] text-white/40 border border-white/[0.06] px-2 py-0.5 rounded-full">
+              <span className="text-[10px] bg-warm-100 text-secondary border border-warm-200 px-2 py-0.5 rounded-full">
                 Initial Sync Complete
               </span>
             )}
           </div>
 
           {syncStatus.sync_progress && (
-            <p className="text-xs text-white/50 mb-3 font-mono leading-relaxed">{syncStatus.sync_progress}</p>
+            <p className="text-xs text-secondary mb-3 font-mono leading-relaxed">{syncStatus.sync_progress}</p>
           )}
 
           {/* Module record counts */}
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 border-t border-white/[0.04] pt-3">
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 border-t border-warm-200/60 pt-3">
             <MetricCell label="PRs" value={syncStatus.total_prs ?? 0} />
             <MetricCell label="Issues" value={syncStatus.total_issues ?? 0} />
             <MetricCell label="Branches" value={syncStatus.total_branches ?? 0} />
@@ -97,20 +97,20 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
             <MetricCell label="Projects" value={syncStatus.total_projects ?? 0} />
           </div>
 
-          <div className="flex flex-wrap gap-4 mt-3 border-t border-white/[0.04] pt-3">
-            <div className="flex items-center gap-1.5 text-xs text-white/35">
+          <div className="flex flex-wrap gap-4 mt-3 border-t border-warm-200/60 pt-3">
+            <div className="flex items-center gap-1.5 text-xs text-muted">
               <Clock className="h-3 w-3" />
               <span>Last sync: {fmt(syncStatus.last_successful_sync)}</span>
             </div>
             {syncStatus.rate_limit_remaining !== null && (
-              <div className="text-xs text-white/35">
+              <div className="text-xs text-muted">
                 API budget: {syncStatus.rate_limit_remaining?.toLocaleString()} / {syncStatus.rate_limit_limit?.toLocaleString()}
               </div>
             )}
           </div>
 
           {status === 'FAILED' && syncStatus.error_message && (
-            <div className="mt-3 p-2.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-xs">
+            <div className="mt-3 p-2.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-850 text-xs">
               <strong>Error:</strong> {syncStatus.error_message}
             </div>
           )}
@@ -126,7 +126,7 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
             <RefreshCw className={`w-3.5 h-3.5 ${isBusy ? 'animate-spin' : ''}`} />
             {isBusy ? 'Syncing…' : 'Sync Now'}
           </button>
-          <span className="text-[10px] text-white/25 text-right">Full incremental sync</span>
+          <span className="text-[10px] text-muted text-right">Full incremental sync</span>
         </div>
       </div>
     </motion.div>

@@ -79,7 +79,7 @@ export default function KPICard({
             <h3 className={`text-3xl font-bold tracking-tight ${a.value}`}>
               {typeof value === 'number' && value % 1 !== 0 ? value.toFixed(1) : value}
             </h3>
-            {unit && <span className="text-sm text-midnight-400">{unit}</span>}
+            {unit && <span className="text-sm text-secondary">{unit}</span>}
           </div>
           {trend !== undefined && (
             <p

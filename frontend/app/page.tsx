@@ -71,6 +71,7 @@ interface SyncStatusData {
   total_forks: number
   total_workflow_runs: number
   total_discussions: number
+  total_projects: number
   rate_limit_remaining: number | null
   rate_limit_limit: number | null
   rate_limit_reset: string | null
@@ -304,7 +305,7 @@ export default function Home() {
         <div className="space-y-6">
           <AuthPanel onAuthenticated={(username) => setUserLabel(username)} />
           {globalError && (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-sm">
               <div className="flex items-center gap-2">
                 <span className="font-semibold">Error:</span>
                 <span>{globalError}</span>
@@ -338,7 +339,7 @@ export default function Home() {
           {/* Syncing banner */}
           {isSyncing && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-4 text-indigo-300 text-sm">
+              className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-indigo-800 text-sm">
               <div className="flex items-center gap-2">
                 <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
                 <span>{syncStatus?.sync_progress || 'Ingesting repository data...'}</span>
@@ -422,13 +423,13 @@ function OverviewSection({ kpi, monthlyFlow, throughput, syncStatus, repoLabel, 
         {cards.map((c) => (
           <motion.button key={c.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             onClick={c.onClick}
-            className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5 flex flex-col gap-3 text-left hover:bg-white/[0.05] transition-all group">
+            className="rounded-2xl border border-warm-200 bg-white p-5 flex flex-col gap-3 text-left hover:bg-warm-50 transition-all shadow-sm group">
             <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${c.color} text-white group-hover:scale-105 transition-transform`}>
               {c.icon}
             </div>
             <div>
-              <p className="text-xl font-bold text-white">{c.value}</p>
-              <p className="text-xs text-white/50 mt-0.5">{c.label}</p>
+              <p className="text-xl font-bold text-primary">{c.value}</p>
+              <p className="text-xs text-secondary mt-0.5">{c.label}</p>
             </div>
           </motion.button>
         ))}
@@ -437,14 +438,14 @@ function OverviewSection({ kpi, monthlyFlow, throughput, syncStatus, repoLabel, 
       {(monthlyFlow?.length > 0 || throughput?.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {monthlyFlow?.length > 0 && (
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
-              <h3 className="text-sm font-semibold text-white mb-4">Monthly PR Flow</h3>
+            <div className="rounded-2xl border border-warm-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-primary mb-4">Monthly PR Flow</h3>
               <MonthlyFlowChart data={monthlyFlow} />
             </div>
           )}
           {throughput?.length > 0 && (
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
-              <h3 className="text-sm font-semibold text-white mb-4">Weekly Throughput</h3>
+            <div className="rounded-2xl border border-warm-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-primary mb-4">Weekly Throughput</h3>
               <ThroughputChart data={throughput} />
             </div>
           )}
@@ -480,7 +481,7 @@ function PullRequestsSection({
       />
 
       {error && (
-        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-rose-300 text-sm">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-sm">
           {error}
         </div>
       )}
@@ -501,14 +502,14 @@ function PullRequestsSection({
       {(monthlyFlow?.length > 0 || throughput?.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {monthlyFlow?.length > 0 && (
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
-              <h3 className="text-sm font-semibold text-white mb-4">Monthly PR Flow</h3>
+            <div className="rounded-2xl border border-warm-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-primary mb-4">Monthly PR Flow</h3>
               <MonthlyFlowChart data={monthlyFlow} />
             </div>
           )}
           {kpi && (
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
-              <h3 className="text-sm font-semibold text-white mb-4">Merge Rate</h3>
+            <div className="rounded-2xl border border-warm-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-primary mb-4">Merge Rate</h3>
               <MergeRateDonut mergeRate={kpi.merge_rate ?? 0} openPrs={kpi.open_prs ?? 0} stalePrs={kpi.stale_prs ?? 0} />
             </div>
           )}
@@ -516,8 +517,8 @@ function PullRequestsSection({
       )}
 
       {throughput?.length > 0 && (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">Weekly Throughput</h3>
+        <div className="rounded-2xl border border-warm-200 bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-primary mb-4">Weekly Throughput</h3>
           <ThroughputChart data={throughput} />
         </div>
       )}
@@ -539,11 +540,11 @@ function PullRequestsSection({
           onPageChange={onOldestPage}
           renderRow={(row: any) => (
             <>
-              <td className="py-2.5 pr-4 font-mono text-white/40 text-xs">#{row.pr_number}</td>
-              <td className="py-2.5 pr-4 text-white/80 text-xs max-w-[220px] truncate">{row.title}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.author}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.age_days}d</td>
-              <td className="py-2.5 text-white/50 text-xs">{row.review_count}</td>
+              <td className="py-2.5 pr-4 font-mono text-muted text-xs">#{row.pr_number}</td>
+              <td className="py-2.5 pr-4 text-primary text-xs max-w-[220px] truncate">{row.title}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{row.author}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{row.age_days}d</td>
+              <td className="py-2.5 text-secondary text-xs">{row.review_count}</td>
             </>
           )}
         />
@@ -558,11 +559,11 @@ function PullRequestsSection({
           onPageChange={onSlowestPage}
           renderRow={(row: any) => (
             <>
-              <td className="py-2.5 pr-4 font-mono text-white/40 text-xs">#{row.pr_number}</td>
-              <td className="py-2.5 pr-4 text-white/80 text-xs max-w-[220px] truncate">{row.title}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.author}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
-              <td className="py-2.5 text-white/50 text-xs">{row.review_count}</td>
+              <td className="py-2.5 pr-4 font-mono text-muted text-xs">#{row.pr_number}</td>
+              <td className="py-2.5 pr-4 text-primary text-xs max-w-[220px] truncate">{row.title}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{row.author}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
+              <td className="py-2.5 text-secondary text-xs">{row.review_count}</td>
             </>
           )}
         />
@@ -577,11 +578,11 @@ function PullRequestsSection({
           onPageChange={onContributorsPage}
           renderRow={(row: any) => (
             <>
-              <td className="py-2.5 pr-4 text-white/80 text-xs font-semibold">{row.username}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.total_prs}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.merged_prs}</td>
-              <td className="py-2.5 pr-4 text-white/50 text-xs">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
-              <td className="py-2.5 text-white/50 text-xs">{renderDuration(formatDurationDisplay(row.avg_review_time))}</td>
+              <td className="py-2.5 pr-4 text-primary text-xs font-semibold">{row.username}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{row.total_prs}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{row.merged_prs}</td>
+              <td className="py-2.5 pr-4 text-secondary text-xs">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
+              <td className="py-2.5 text-secondary text-xs">{renderDuration(formatDurationDisplay(row.avg_review_time))}</td>
             </>
           )}
         />

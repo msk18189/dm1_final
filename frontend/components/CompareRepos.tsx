@@ -49,9 +49,9 @@ export default function CompareRepos({ defaultUrl, githubToken = '' }: CompareRe
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow">
       <div className="mb-4 flex items-center gap-2">
         <GitCompare className="h-5 w-5 text-palette-emerald" />
-        <h3 className="section-title">Compare repositories</h3>
+        <h3 className="section-title text-primary">Compare repositories</h3>
       </div>
-      <p className="section-subtitle mb-4">
+      <p className="section-subtitle text-secondary mb-4">
         For private repos, use the same token as in Analyze above, or paste a token below (only sent to your backend).
       </p>
       <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -71,7 +71,7 @@ export default function CompareRepos({ defaultUrl, githubToken = '' }: CompareRe
         />
       </div>
       <div className="mb-4">
-        <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+        <label className="block text-xs text-secondary mb-1 flex items-center gap-1">
           <KeyRound className="w-3 h-3" /> Token for compare (optional)
         </label>
         <input
@@ -80,7 +80,7 @@ export default function CompareRepos({ defaultUrl, githubToken = '' }: CompareRe
           value={compareToken}
           onChange={(e) => setCompareToken(e.target.value)}
           placeholder="Optional — overrides Analyze token if set"
-          className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white text-sm font-mono"
+          className="w-full px-3 py-2 bg-white border border-warm-200 rounded-lg text-primary text-sm font-mono"
         />
       </div>
       <button
@@ -92,20 +92,20 @@ export default function CompareRepos({ defaultUrl, githubToken = '' }: CompareRe
         {loading ? <Loader className="w-4 h-4 animate-spin" /> : null}
         Compare
       </button>
-      {error && <p className="text-red-400 text-sm mt-3">{error}</p>}
+      {error && <p className="text-rose-600 text-sm mt-3">{error}</p>}
       {result && (
         <div className="mt-6 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-dark-700">
-                <th className="py-2 text-left text-gray-400">Metric</th>
-                <th className="py-2 text-left text-gray-400">
+              <tr className="border-b border-warm-200">
+                <th className="py-2 text-left text-secondary font-semibold">Metric</th>
+                <th className="py-2 text-left text-secondary font-semibold">
                   {result.repo_a.owner}/{result.repo_a.name}
                 </th>
-                <th className="py-2 text-left text-gray-400">
+                <th className="py-2 text-left text-secondary font-semibold">
                   {result.repo_b.owner}/{result.repo_b.name}
                 </th>
-                <th className="py-2 text-left text-gray-400">Delta (B − A)</th>
+                <th className="py-2 text-left text-secondary font-semibold">Delta (B − A)</th>
               </tr>
             </thead>
             <tbody>
@@ -122,15 +122,15 @@ export default function CompareRepos({ defaultUrl, githubToken = '' }: CompareRe
                     ? formatDurationDisplay(result.repo_b.kpi.avg_cycle_time_display, b)
                     : { value: b, unit: key === 'merge_rate' ? '%' : '' }
                 return (
-                  <tr key={key} className="border-b border-dark-700/50">
-                    <td className="py-2 text-gray-300">{label}</td>
-                    <td className="py-2">
+                  <tr key={key} className="border-b border-warm-100">
+                    <td className="py-2 text-primary font-medium">{label}</td>
+                    <td className="py-2 text-secondary">
                       {displayA.value} {displayA.unit}
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 text-secondary">
                       {displayB.value} {displayB.unit}
                     </td>
-                    <td className="py-2 text-gray-400">
+                    <td className="py-2 text-muted">
                       {delta != null ? (delta > 0 ? `+${delta}` : delta) : '—'}
                     </td>
                   </tr>

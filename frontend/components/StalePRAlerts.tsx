@@ -64,9 +64,9 @@ export default function StalePRAlerts({
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow h-full">
         <div className="mb-2 flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-palette-teal" />
-          <h3 className="section-title">Stale PR Alerts</h3>
+          <h3 className="section-title text-primary">Stale PR Alerts</h3>
         </div>
-        <p className="text-sm text-midnight-400">No PRs need attention right now.</p>
+        <p className="text-sm text-muted">No PRs need attention right now.</p>
       </motion.div>
     )
   }
@@ -77,10 +77,10 @@ export default function StalePRAlerts({
         <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-palette-amber" />
-            <h3 className="section-title">Stale PR Alerts</h3>
+            <h3 className="section-title text-primary">Stale PR Alerts</h3>
           </div>
           {totalResults !== undefined && (
-            <span className="text-xs text-midnight-400 font-medium">
+            <span className="text-xs text-muted font-medium">
               Total: {totalResults.toLocaleString()} records
             </span>
           )}
@@ -96,28 +96,28 @@ export default function StalePRAlerts({
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-semibold text-midnight-50">
+                  <p className="font-semibold text-primary">
                     #{alert.number} — {alert.title}
                   </p>
-                  <p className="text-xs text-midnight-200 mt-1 font-medium">
-                    {alert.author} · {alert.age_days} days open · <span className="capitalize font-bold text-midnight-50">{alert.severity}</span> priority
+                  <p className="text-xs text-secondary mt-1 font-medium">
+                    {alert.author} · {alert.age_days} days open · <span className="capitalize font-bold text-primary">{alert.severity}</span> priority
                   </p>
                 </div>
               </div>
               <div className="mt-3 grid md:grid-cols-2 gap-3">
                 <div>
-                  <p className="text-xs font-bold text-midnight-50 uppercase tracking-wider mb-1">Why flagged</p>
-                  <ul className="text-sm text-midnight-100 space-y-1 font-medium">
+                  <p className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Why flagged</p>
+                  <ul className="text-sm text-secondary space-y-1 font-medium">
                     {alert.reasons.map((r, i) => (
                       <li key={i}>• {r}</li>
                     ))}
                   </ul>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-midnight-50 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <p className="text-xs font-bold text-primary uppercase tracking-wider mb-1 flex items-center gap-1">
                     <Lightbulb className="w-3 h-3 text-palette-emerald" /> Recommended actions
                   </p>
-                  <ul className="text-sm text-palette-teal-dark space-y-1 font-semibold">
+                  <ul className="text-sm text-palette-teal-text space-y-1 font-semibold">
                     {alert.recommended_actions.map((a, i) => (
                       <li key={i}>→ {a}</li>
                     ))}
@@ -139,22 +139,22 @@ export default function StalePRAlerts({
       </div>
 
       {totalPages !== undefined && onPageChange && totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between border-t border-white/[0.04] pt-4 shrink-0">
+        <div className="mt-4 flex items-center justify-between border-t border-warm-200 pt-4 shrink-0">
           <button
             onClick={() => onPageChange(Math.max(1, page - 1))}
             disabled={page <= 1}
-            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
           >
             Previous
           </button>
-          <span className="text-xs text-midnight-300">
-            Page <span className="font-semibold text-emerald-400">{page}</span> of{' '}
-            <span className="font-semibold">{totalPages}</span>
+          <span className="text-xs text-secondary">
+            Page <span className="font-semibold text-primary">{page}</span> of{' '}
+            <span className="font-semibold text-primary">{totalPages}</span>
           </span>
           <button
             onClick={() => onPageChange(Math.min(totalPages, page + 1))}
             disabled={page >= totalPages}
-            className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-midnight-200 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
           >
             Next
           </button>
