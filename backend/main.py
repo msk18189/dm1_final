@@ -9,7 +9,11 @@ import sys
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI(title="GitHub PR Intelligence Dashboard")
+app = FastAPI(
+    title="PRISM — GitHub Engineering Intelligence Platform",
+    version="2.0.0",
+    description="Enterprise-grade GitHub repository intelligence: PRs, Issues, Branches, CI/CD, Forks, Discussions, Projects",
+)
 
 # CORS middleware
 app.add_middleware(

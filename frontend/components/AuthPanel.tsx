@@ -35,16 +35,24 @@ export default function AuthPanel({ onAuthenticated }: AuthPanelProps) {
   const isSignUp = mode === 'signup'
 
   useEffect(() => {
-    if (getAuthUser()) {
-      router.replace('/')
-      return
-    }
+    const checkAuth = async () => {
+      try {
+        const u = await getAuthUser()
+        if (u) {
+          router.replace('/')
+          return
+        }
+      } catch (err) {
+        console.error("Auth check failed", err)
+      }
 
-    if (hasStoredUsers()) {
-      setMode('signin')
-    } else {
-      setMode('signup')
+      if (hasStoredUsers()) {
+        setMode('signin')
+      } else {
+        setMode('signup')
+      }
     }
+    checkAuth()
   }, [router])
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {

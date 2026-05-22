@@ -426,6 +426,7 @@ class ExtendedAnalytics:
         subq = query.subquery()
         
         # 1. counts
+        total_count = self.db.query(func.count(subq.c.id)).scalar() or 0
         open_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN").scalar() or 0
         stale_cutoff = datetime.utcnow() - timedelta(days=30)
         stale_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN", subq.c.created_at < stale_cutoff).scalar() or 0
@@ -433,24 +434,25 @@ class ExtendedAnalytics:
         closed_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state.in_(["MERGED", "CLOSED"])).scalar() or 0
 
         # 2. averages
-        avg_cycle_days = self.db.query(func.avg(subq.c.cycle_time_days)).filter(subq.c.state == "MERGED").scalar() or 0.0
+        avg_cycle_days = float(self.db.query(func.avg(subq.c.cycle_time_days)).filter(subq.c.state == "MERGED").scalar() or 0.0)
         avg_cycle = avg_cycle_days * 24
 
         # For median cycle time:
-        cycle_times = [r[0] for r in self.db.query(subq.c.cycle_time_days).filter(subq.c.state == "MERGED", subq.c.cycle_time_days.isnot(None)).order_by(subq.c.cycle_time_days).all()]
+        cycle_times = [float(r[0]) for r in self.db.query(subq.c.cycle_time_days).filter(subq.c.state == "MERGED", subq.c.cycle_time_days.isnot(None)).order_by(subq.c.cycle_time_days).all()]
         if cycle_times:
             n = len(cycle_times)
             median_cycle = (cycle_times[n // 2] if n % 2 == 1 else (cycle_times[n // 2 - 1] + cycle_times[n // 2]) / 2) * 24
         else:
             median_cycle = 0.0
 
-        avg_wait = self.db.query(func.avg(subq.c.wait_for_review_hours)).filter(subq.c.wait_for_review_hours.isnot(None), subq.c.wait_for_review_hours >= 0).scalar() or 0.0
-        avg_review = self.db.query(func.avg(subq.c.review_duration_hours)).filter(subq.c.review_duration_hours.isnot(None), subq.c.review_duration_hours >= 0).scalar() or 0.0
+        avg_wait = float(self.db.query(func.avg(subq.c.wait_for_review_hours)).filter(subq.c.wait_for_review_hours.isnot(None), subq.c.wait_for_review_hours >= 0).scalar() or 0.0)
+        avg_review = float(self.db.query(func.avg(subq.c.review_duration_hours)).filter(subq.c.review_duration_hours.isnot(None), subq.c.review_duration_hours >= 0).scalar() or 0.0)
 
         merge_rate = round((merged_count / closed_count * 100) if closed_count else 0, 2)
-        avg_reviews = self.db.query(func.avg(subq.c.review_count)).scalar() or 0.0
+        avg_reviews = float(self.db.query(func.avg(subq.c.review_count)).scalar() or 0.0)
 
         return {
+            "total_prs": total_count,
             "open_prs": open_count,
             "stale_prs": stale_count,
             "avg_cycle_time": round(avg_cycle / 24, 2) if avg_cycle else 0,

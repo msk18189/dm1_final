@@ -28,23 +28,37 @@ function saveUsers(users: StoredUsers): void {
   }
 }
 
-export function getAuthUser(): string | null {
-  if (!isBrowser()) return null
+export function getAuthUser(): Promise<{ username: string } | null> {
+  if (!isBrowser()) return Promise.resolve(null)
   try {
-    return window.sessionStorage.getItem(AUTH_CURRENT_USER_KEY)
-  } catch {
-    return null
+    const username = window.sessionStorage.getItem(AUTH_CURRENT_USER_KEY)
+    if (!username) {
+      return Promise.resolve(null)
+    }
+    return Promise.resolve({ username })
+  } catch (err) {
+    console.error("Auth load failed", err)
+    return Promise.resolve(null)
   }
 }
 
 export function hasStoredUsers(): boolean {
   if (!isBrowser()) return false
-  const users = loadUsers()
-  return Object.keys(users).length > 0
+  try {
+    const users = loadUsers()
+    return Object.keys(users).length > 0
+  } catch {
+    return false
+  }
 }
 
 export function isAuthenticated(): boolean {
-  return Boolean(getAuthUser())
+  if (!isBrowser()) return false
+  try {
+    return Boolean(window.sessionStorage.getItem(AUTH_CURRENT_USER_KEY))
+  } catch {
+    return false
+  }
 }
 
 export function signOut(): void {

@@ -8,11 +8,11 @@ Defaults follow the requested configuration (localhost, port 3306,
 user root, empty password, database github_analytics). These values
 can be overridden with environment variables.
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
-from urllib.parse import quote_plus 
+from urllib.parse import quote_plus
 
 load_dotenv()
 
@@ -63,6 +63,9 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
     echo=False,
     connect_args=connect_args,
 )
@@ -74,64 +77,110 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-def init_db():
-    """Create all tables in the database. Safe to call on app startup.
-
-    This will issue CREATE TABLE statements for all models that inherit
-    from `Base`. If the database does not exist, SQLAlchemy will try to create it.
-    """
-    Base.metadata.create_all(bind=engine)
-    
-    # Self-healing migration: Add missing columns if they don't exist
-    from sqlalchemy import inspect, text
+def _add_column_if_missing(conn, table: str, col: str, col_def: str):
+    """Helper to add a column to an existing table if it does not already exist."""
     try:
-        inspector = inspect(engine)
-        
-        # Check repositories table columns
-        if "repositories" in inspector.get_table_names():
-            existing_cols = {c["name"] for c in inspector.get_columns("repositories")}
-            new_cols = {
-                "sync_status": "VARCHAR(50) DEFAULT 'IDLE'",
-                "sync_progress": "VARCHAR(255)",
-                "last_synced_at": "DATETIME",
-                "last_successful_sync": "DATETIME",
-                "total_prs": "INTEGER DEFAULT 0",
-                "error_message": "TEXT",
-                "rate_limit_remaining": "INTEGER",
-                "rate_limit_limit": "INTEGER",
-                "rate_limit_reset": "DATETIME",
-            }
-            with engine.connect() as conn:
-                for col, sql_type in new_cols.items():
+        conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN `{col}` {col_def}"))
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        print(f"[Schema] Added column '{col}' to '{table}'.")
+    except Exception as inner:
+        # Duplicate column errors are expected when running migrations repeatedly
+        msg = str(inner).lower()
+        if "duplicate column" in msg or "already exists" in msg:
+            pass  # Column already present — no action needed
+        else:
+            print(f"[Schema Warning] Failed to add column '{col}' to '{table}': {inner}")
+
+
+def _run_migrations(engine_obj):
+    """
+    Self-healing migration runner.
+    Adds any missing columns to existing tables after CREATE TABLE runs.
+    New columns are added without destroying existing data.
+    """
+    try:
+        inspector = inspect(engine_obj)
+        existing_tables = set(inspector.get_table_names())
+
+        with engine_obj.connect() as conn:
+
+            # ----------------------------------------------------------------
+            # repositories — extended fields
+            # ----------------------------------------------------------------
+            if "repositories" in existing_tables:
+                existing_cols = {c["name"] for c in inspector.get_columns("repositories")}
+                new_cols = {
+                    "description": "TEXT",
+                    "homepage": "VARCHAR(1024)",
+                    "language": "VARCHAR(100)",
+                    "default_branch": "VARCHAR(255)",
+                    "repo_size": "INTEGER DEFAULT 0",
+                    "watchers": "INTEGER DEFAULT 0",
+                    "forks_count": "INTEGER DEFAULT 0",
+                    "visibility": "VARCHAR(50) DEFAULT 'public'",
+                    "sync_error": "TEXT",
+                    "sync_duration": "FLOAT",
+                    "initial_sync_completed": "TINYINT(1) DEFAULT 0",
+                    "last_synced_at": "DATETIME",
+                    "last_successful_sync": "DATETIME",
+                    "last_synced": "DATETIME",
+                    "sync_status": "VARCHAR(50) DEFAULT 'IDLE'",
+                    "sync_progress": "VARCHAR(512)",
+                    "total_prs": "INTEGER DEFAULT 0",
+                    "total_issues": "INTEGER DEFAULT 0",
+                    "total_branches": "INTEGER DEFAULT 0",
+                    "total_forks": "INTEGER DEFAULT 0",
+                    "total_workflow_runs": "INTEGER DEFAULT 0",
+                    "total_discussions": "INTEGER DEFAULT 0",
+                    "error_message": "TEXT",
+                    "rate_limit_remaining": "INTEGER",
+                    "rate_limit_limit": "INTEGER",
+                    "rate_limit_reset": "DATETIME",
+                }
+                for col, defn in new_cols.items():
                     if col not in existing_cols:
-                        try:
-                            conn.execute(text(f"ALTER TABLE repositories ADD COLUMN {col} {sql_type}"))
-                            # SQLite or SQLAlchemy 2.0 might auto-commit or require transaction commits.
-                            # Calling conn.commit() is safe on connection objects in SQLAlchemy 2.0.
-                            try:
-                                conn.commit()
-                            except Exception:
-                                pass
-                            print(f"[Schema Ingestion] Added column '{col}' to 'repositories' table.")
-                        except Exception as inner:
-                            print(f"[Schema Warning] Failed to add column '{col}' to 'repositories': {inner}")
-                            
-        # Check pull_requests table columns
-        if "pull_requests" in inspector.get_table_names():
-            existing_cols = {c["name"] for c in inspector.get_columns("pull_requests")}
-            if "updated_at" not in existing_cols:
-                with engine.connect() as conn:
-                    try:
-                        conn.execute(text("ALTER TABLE pull_requests ADD COLUMN updated_at DATETIME"))
-                        try:
-                            conn.commit()
-                        except Exception:
-                            pass
-                        print("[Schema Ingestion] Added column 'updated_at' to 'pull_requests' table.")
-                    except Exception as inner:
-                        print(f"[Schema Warning] Failed to add column 'updated_at' to 'pull_requests': {inner}")
+                        _add_column_if_missing(conn, "repositories", col, defn)
+
+            # ----------------------------------------------------------------
+            # pull_requests — extended fields
+            # ----------------------------------------------------------------
+            if "pull_requests" in existing_tables:
+                existing_cols = {c["name"] for c in inspector.get_columns("pull_requests")}
+                new_cols = {
+                    "github_node_id": "VARCHAR(255)",
+                    "body": "TEXT",
+                    "merge_state": "VARCHAR(100)",
+                    "draft": "TINYINT(1) DEFAULT 0",
+                    "labels": "TEXT",
+                    "base_branch": "VARCHAR(255)",
+                    "head_branch": "VARCHAR(255)",
+                    "updated_at": "DATETIME",
+                    "closed_at": "DATETIME",
+                }
+                for col, defn in new_cols.items():
+                    if col not in existing_cols:
+                        _add_column_if_missing(conn, "pull_requests", col, defn)
+
+            # ----------------------------------------------------------------
+            # contributors — add unique index guard (non-destructive)
+            # ----------------------------------------------------------------
+            # No new columns needed; unique index is handled by models
+
     except Exception as e:
         print(f"[Schema Warning] Error during self-healing migrations: {e}")
+
+
+def init_db():
+    """Create all tables in the database. Safe to call on app startup."""
+    # Import all models so SQLAlchemy knows about them before create_all
+    from database import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+    _run_migrations(engine)
+    print("[DB] All tables verified/created successfully.")
 
 
 def get_db():

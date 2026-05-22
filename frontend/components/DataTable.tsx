@@ -2,37 +2,40 @@
 
 import { motion } from 'framer-motion'
 
-interface Column {
-  key: string
-  label: string
-  render?: (value: any, row?: any) => React.ReactNode
-}
-
 interface DataTableProps {
   title: string
-  columns: Column[]
+  icon?: React.ReactNode
+  columns: string[]
   data: any[]
   emptyMessage?: string
   page?: number
-  totalPages?: number
+  pages?: number
   onPageChange?: (newPage: number) => void
   totalResults?: number
+  renderRow: (row: any, idx: number) => React.ReactNode
 }
 
 export default function DataTable({
   title,
+  icon,
   columns,
   data,
   emptyMessage = 'No data available',
   page = 1,
-  totalPages,
+  pages,
   onPageChange,
   totalResults,
+  renderRow,
 }: DataTableProps) {
+  const totalPages = pages
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
-        <h3 className="section-title">{title}</h3>
+        <div className="flex items-center gap-2 text-midnight-50">
+          {icon}
+          <h3 className="section-title">{title}</h3>
+        </div>
         {totalResults !== undefined && (
           <span className="text-xs text-midnight-400 font-medium">
             Total: {totalResults.toLocaleString()} records
@@ -50,10 +53,10 @@ export default function DataTable({
                 <tr className="border-b border-brown-200 bg-brown-50">
                   {columns.map((col) => (
                     <th
-                      key={col.key}
+                      key={col}
                       className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-midnight-400"
                     >
-                      {col.label}
+                      {col}
                     </th>
                   ))}
                 </tr>
@@ -64,11 +67,7 @@ export default function DataTable({
                     key={idx}
                     className="border-b border-midnight-800 transition hover:bg-palette-emerald-light/50"
                   >
-                    {columns.map((col) => (
-                      <td key={col.key} className="px-4 py-3 text-sm text-midnight-200">
-                        {col.render ? col.render(row[col.key], row) : row[col.key]}
-                      </td>
-                    ))}
+                    {renderRow(row, idx)}
                   </tr>
                 ))}
               </tbody>

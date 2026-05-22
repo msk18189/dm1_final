@@ -85,7 +85,7 @@ class AnalyticsService:
             PullRequest.repo_id == repo_id,
             PullRequest.cycle_time_days.isnot(None)
         ).scalar()
-        return round(result or 0, 2)
+        return round(float(result or 0), 2)
     
     def get_median_cycle_time(self, repo_id: int) -> float:
         prs = self.db.query(PullRequest.cycle_time_days).filter(
@@ -118,14 +118,14 @@ class AnalyticsService:
             PullRequest.repo_id == repo_id,
             PullRequest.review_duration_hours.isnot(None)
         ).scalar()
-        return round((result or 0) / 24, 2)  # Convert to days
+        return round(float(result or 0) / 24, 2)  # Convert to days
     
     def get_avg_wait_for_review(self, repo_id: int) -> float:
         result = self.db.query(func.avg(PullRequest.wait_for_review_hours)).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.wait_for_review_hours.isnot(None)
         ).scalar()
-        return round((result or 0) / 24, 2)  # Convert to days
+        return round(float(result or 0) / 24, 2)  # Convert to days
     
     def get_pr_throughput(self, repo_id: int, weeks: int = 8) -> List[Dict[str, Any]]:
         """PRs merged per ISO week (chronological, zero-filled)."""
@@ -287,7 +287,7 @@ class AnalyticsService:
             PullRequest.repo_id == repo_id,
             PullRequest.review_count.isnot(None)
         ).scalar()
-        return round(result or 0, 1)
+        return round(float(result or 0), 1)
     
     def get_kpi_summary(self, repo_id: int) -> Dict[str, Any]:
         return {

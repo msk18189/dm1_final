@@ -1,721 +1,590 @@
 'use client'
 
-import Link from 'next/link'
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
+import dynamic from 'next/dynamic'
+
 import AppShell, { NavSection } from '@/components/AppShell'
 import AuthPanel from '@/components/AuthPanel'
 import RepositoryInput from '@/components/RepositoryInput'
+import RepositoryStatusPanel from '@/components/RepositoryStatusPanel'
 import KPICard from '@/components/KPICard'
 import DataTable from '@/components/DataTable'
 import DashboardFilters, { DashboardFiltersState } from '@/components/DashboardFilters'
 import PRRiskPanel from '@/components/PRRiskPanel'
 import StalePRAlerts from '@/components/StalePRAlerts'
 import ExportButton from '@/components/ExportButton'
-import dynamic from 'next/dynamic'
 
+// Module panels — all lazy-loaded for performance
+const IssuesPanel = dynamic(() => import('@/components/modules/IssuesPanel'), { ssr: false })
+const BranchesPanel = dynamic(() => import('@/components/modules/BranchesPanel'), { ssr: false })
+const CICDPanel = dynamic(() => import('@/components/modules/CICDPanel'), { ssr: false })
+const ForksPanel = dynamic(() => import('@/components/modules/ForksPanel'), { ssr: false })
+const ProjectsPanel = dynamic(() => import('@/components/modules/ProjectsPanel'), { ssr: false })
+const DiscussionsPanel = dynamic(() => import('@/components/modules/DiscussionsPanel'), { ssr: false })
+const RepoHealthPanel = dynamic(() => import('@/components/modules/RepoHealthPanel'), { ssr: false })
+const SettingsPanel = dynamic(() => import('@/components/modules/SettingsPanel'), { ssr: false })
+
+// Charts
 const MergeRateDonut = dynamic(() => import('@/components/MergeRateDonut'), { ssr: false })
-const MonthlyFlowChart = dynamic(() => import('@/components/Charts').then((mod) => mod.MonthlyFlowChart), { ssr: false })
-const ThroughputChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ThroughputChart), { ssr: false })
-const ContributorChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ContributorChart), { ssr: false })
-const ReviewTurnaroundChart = dynamic(() => import('@/components/Charts').then((mod) => mod.ReviewTurnaroundChart), { ssr: false })
+const MonthlyFlowChart = dynamic(() => import('@/components/Charts').then(m => m.MonthlyFlowChart), { ssr: false })
+const ThroughputChart = dynamic(() => import('@/components/Charts').then(m => m.ThroughputChart), { ssr: false })
+const ContributorChart = dynamic(() => import('@/components/Charts').then(m => m.ContributorChart), { ssr: false })
+const ReviewTurnaroundChart = dynamic(() => import('@/components/Charts').then(m => m.ReviewTurnaroundChart), { ssr: false })
+
 import {
-  analyzeRepository,
-  formatApiError,
-  getKPI,
-  getOldestPRs,
-  getSlowestPRs,
-  getContributorActivity,
-  getMonthlyFlow,
-  getThroughput,
-  getAuthors,
-  getPRRisk,
-  getStaleAlerts,
-  getSyncStatus,
+  analyzeRepository, formatApiError,
+  getKPI, getOldestPRs, getSlowestPRs, getContributorActivity,
+  getMonthlyFlow, getThroughput, getAuthors, getPRRisk, getStaleAlerts,
+  getSyncStatus, verifyRepositoryAccess,
 } from '@/lib/api'
 import { formatDurationDisplay, formatDurationFromDays } from '@/lib/format'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
 import { getAuthUser, signOut } from '@/lib/auth'
 import {
-  AlertCircle,
-  FolderGit2,
-  Clock,
-  Timer,
-  Eye,
-  MessageSquare,
-  GitMerge,
-  AlertOctagon,
-  RefreshCw,
-  Database,
-  CheckCircle2,
-  XCircle,
-  Info,
-  Zap,
+  AlertCircle, FolderGit2, Clock, Timer, Eye, MessageSquare,
+  GitMerge, AlertOctagon, RefreshCw, Zap,
 } from 'lucide-react'
 
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const SYNC_POLL_MS = 3000
+const SYNC_COMPLETE_STATUSES = ['COMPLETED', 'FAILED']
+
 const defaultFilters: DashboardFiltersState = {
-  days: null,
-  author: 'all',
-  state: 'ALL',
+  days: null, author: 'all', state: 'ALL',
 }
 
-function repoLabelFromUrl(url: string) {
-  try {
-    const path = url.replace(/\.git$/, '').split('github.com/')[1]
-    if (path) return path.replace(/\/$/, '')
-  } catch {
-    /* ignore */
-  }
-  return 'Repository'
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface SyncStatusData {
+  sync_status: 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED'
+  sync_progress: string | null
+  sync_duration: number | null
+  initial_sync_completed: boolean
+  last_synced_at: string | null
+  last_successful_sync: string | null
+  error_message: string | null
+  total_prs: number
+  total_issues: number
+  total_branches: number
+  total_forks: number
+  total_workflow_runs: number
+  total_discussions: number
+  rate_limit_remaining: number | null
+  rate_limit_limit: number | null
+  rate_limit_reset: string | null
 }
+
+function renderDuration(dur: { value: string | number; unit: string }): string {
+  return `${dur.value} ${dur.unit}`
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Home() {
+  // Auth + Token
+  const [githubToken, setGithubToken] = useState<string>(() => loadGithubToken())
+  const [userLabel, setUserLabel] = useState<string | undefined>()
+
+  // Repo state
   const [repoId, setRepoId] = useState<number | null>(null)
-  const [repoUrl, setRepoUrl] = useState('')
-  const [githubToken, setGithubToken] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [data, setData] = useState<any>(null)
-  const [authors, setAuthors] = useState<string[]>([])
+  const [repoLabel, setRepoLabel] = useState<string>('')
+  const [activeSection, setActiveSection] = useState<NavSection>('overview')
+
+  // Sync state
+  const [syncStatus, setSyncStatus] = useState<SyncStatusData | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // PR dashboard state (preserved from original)
   const [filters, setFilters] = useState<DashboardFiltersState>(defaultFilters)
-  const [activeSection, setActiveSection] = useState<NavSection>('analyze')
-  const [authUser, setAuthUser] = useState<string | null>(null)
+  const [authors, setAuthors] = useState<string[]>([])
+  const [kpi, setKpi] = useState<any>(null)
+  const [oldestPRs, setOldestPRs] = useState<any>(null)
+  const [slowestPRs, setSlowestPRs] = useState<any>(null)
+  const [contributors, setContributors] = useState<any>(null)
+  const [monthlyFlow, setMonthlyFlow] = useState<any[]>([])
+  const [throughput, setThroughput] = useState<any[]>([])
+  const [prRisk, setPRRisk] = useState<any>(null)
+  const [staleAlerts, setStaleAlerts] = useState<any>(null)
+  const [loadingPR, setLoadingPR] = useState(false)
+  const [prError, setPRError] = useState<string | null>(null)
 
-  // Paginated states
-  const [oldestData, setOldestData] = useState<any[]>([])
+  // PR table pagination
   const [oldestPage, setOldestPage] = useState(1)
-  const [oldestTotalPages, setOldestTotalPages] = useState(1)
-  const [oldestTotalResults, setOldestTotalResults] = useState(0)
-
-  const [slowestData, setSlowestData] = useState<any[]>([])
   const [slowestPage, setSlowestPage] = useState(1)
-  const [slowestTotalPages, setSlowestTotalPages] = useState(1)
-  const [slowestTotalResults, setSlowestTotalResults] = useState(0)
-
-  const [contributorsData, setContributorsData] = useState<any[]>([])
   const [contributorsPage, setContributorsPage] = useState(1)
-  const [contributorsTotalPages, setContributorsTotalPages] = useState(1)
-  const [contributorsTotalResults, setContributorsTotalResults] = useState(0)
-
-  const [prRiskData, setPRRiskData] = useState<any[]>([])
   const [prRiskPage, setPRRiskPage] = useState(1)
-  const [prRiskTotalPages, setPRRiskTotalPages] = useState(1)
-  const [prRiskTotalResults, setPRRiskTotalResults] = useState(0)
-
-  const [staleAlertsData, setStaleAlertsData] = useState<any[]>([])
   const [staleAlertsPage, setStaleAlertsPage] = useState(1)
-  const [staleAlertsTotalPages, setStaleAlertsTotalPages] = useState(1)
-  const [staleAlertsTotalResults, setStaleAlertsTotalResults] = useState(0)
 
-  // Sync status
-  const [syncStatus, setSyncStatus] = useState<any>(null)
+  // App state
+  const [globalError, setGlobalError] = useState<string | null>(null)
 
+  // Load auth user
   useEffect(() => {
-    setGithubToken(loadGithubToken())
-    setAuthUser(getAuthUser())
-  }, [])
-
-  const handleGithubTokenChange = (value: string) => {
-    setGithubToken(value)
-    saveGithubToken(value)
-  }
-
-  const handleSignOut = () => {
-    signOut()
-    setAuthUser(null)
-  }
-
-  const loadDashboardData = useCallback(
-    async (id: number, activeFilters: DashboardFiltersState = defaultFilters, silent: boolean = false) => {
-      if (!silent) setIsLoading(true)
+    const loadUser = async () => {
       try {
-        const [
-          kpi,
-          oldestRes,
-          slowestRes,
-          contributorsRes,
-          monthlyFlow,
-          throughput,
-          prRiskRes,
-          staleAlertsRes,
-          authorList,
-        ] = await Promise.all([
-          getKPI(id, activeFilters),
-          getOldestPRs(id, oldestPage, 10, activeFilters),
-          getSlowestPRs(id, slowestPage, 10, activeFilters),
-          getContributorActivity(id, contributorsPage, 10, activeFilters),
-          getMonthlyFlow(id, 6, activeFilters),
-          getThroughput(id, 8, activeFilters),
-          getPRRisk(id, prRiskPage, 15),
-          getStaleAlerts(id, staleAlertsPage, 10),
-          getAuthors(id),
-        ])
-
-        const reviewTurnaround = (contributorsRes.data || []).map((c: any) => ({
-          username: c.username,
-          avg_wait_hours: (c.avg_wait_for_review || 0) * 24,
-        }))
-
-        setAuthors(authorList)
-        setData({
-          kpi,
-          monthlyFlow,
-          throughput,
-          reviewTurnaround,
-        })
-
-        // Paginated states updates
-        setOldestData(oldestRes.data || [])
-        setOldestPage(oldestRes.page || 1)
-        setOldestTotalPages(oldestRes.pages || 1)
-        setOldestTotalResults(oldestRes.total || 0)
-
-        setSlowestData(slowestRes.data || [])
-        setSlowestPage(slowestRes.page || 1)
-        setSlowestTotalPages(slowestRes.pages || 1)
-        setSlowestTotalResults(slowestRes.total || 0)
-
-        setContributorsData(contributorsRes.data || [])
-        setContributorsPage(contributorsRes.page || 1)
-        setContributorsTotalPages(contributorsRes.pages || 1)
-        setContributorsTotalResults(contributorsRes.total || 0)
-
-        setPRRiskData(prRiskRes.data || [])
-        setPRRiskPage(prRiskRes.page || 1)
-        setPRRiskTotalPages(prRiskRes.pages || 1)
-        setPRRiskTotalResults(prRiskRes.total || 0)
-
-        setStaleAlertsData(staleAlertsRes.data || [])
-        setStaleAlertsPage(staleAlertsRes.page || 1)
-        setStaleAlertsTotalPages(staleAlertsRes.pages || 1)
-        setStaleAlertsTotalResults(staleAlertsRes.total || 0)
-
-        if (!silent) setActiveSection('overview')
-      } catch (err: unknown) {
-        if (!silent) setError(formatApiError(err) || 'Failed to load dashboard data')
-      } finally {
-        if (!silent) setIsLoading(false)
-      }
-    },
-    [oldestPage, slowestPage, contributorsPage, prRiskPage, staleAlertsPage]
-  )
-
-  // Sync status polling effect
-  useEffect(() => {
-    if (!repoId) return
-
-    let intervalId: any = null
-
-    const checkStatus = async () => {
-      try {
-        const status = await getSyncStatus(repoId)
-        setSyncStatus(status)
-        
-        // If sync has completed or failed, we clear the timer and run a final reload
-        if (status.sync_status !== 'SYNCING') {
-          if (intervalId) {
-            clearInterval(intervalId)
-            intervalId = null
-          }
-          // Do a final visible refresh of all metrics
-          loadDashboardData(repoId, filters, false)
-        } else {
-          // Silent polling load to update the charts/lists dynamically in background
-          loadDashboardData(repoId, filters, true)
+        const u = await getAuthUser()
+        if (u) {
+          setUserLabel(u.username)
         }
       } catch (err) {
-        console.error("Error polling sync status:", err)
+        console.error("Auth load failed", err)
       }
     }
+    loadUser()
+  }, [])
 
-    checkStatus()
-    intervalId = setInterval(checkStatus, 3000)
+  // ─── Sync polling ──────────────────────────────────────────────────────────
 
-    return () => {
-      if (intervalId) clearInterval(intervalId)
-    }
-  }, [repoId, filters, loadDashboardData])
+  const startPolling = useCallback((id: number) => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getSyncStatus(id)
+        setSyncStatus(status as SyncStatusData)
+        if (SYNC_COMPLETE_STATUSES.includes(status.sync_status)) {
+          clearInterval(pollRef.current!)
+          pollRef.current = null
+          setIsSyncing(false)
+          // After completion, load PR data
+          if (status.sync_status === 'COMPLETED') {
+            loadPRData(id, defaultFilters)
+          }
+        }
+      } catch (_) {}
+    }, SYNC_POLL_MS)
+  }, [])
 
-  // Page changes handlers
-  const handleOldestPRsPageChange = async (newPage: number) => {
-    if (!repoId) return
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  // ─── PR Data Loading ───────────────────────────────────────────────────────
+
+  const loadPRData = useCallback(async (id: number, f: DashboardFiltersState) => {
+    if (!id) return
+    setLoadingPR(true)
+    setPRError(null)
     try {
-      const res = await getOldestPRs(repoId, newPage, 10, filters)
-      setOldestData(res.data || [])
-      setOldestPage(res.page || 1)
-      setOldestTotalPages(res.pages || 1)
-      setOldestTotalResults(res.total || 0)
+      const [kpiData, auths, monthFlow, tp] = await Promise.all([
+        getKPI(id, f), getAuthors(id), getMonthlyFlow(id, 6, f), getThroughput(id, 8, f),
+      ])
+      setKpi(kpiData)
+      setAuthors(auths || [])
+      setMonthlyFlow(Array.isArray(monthFlow) ? monthFlow : [])
+      setThroughput(Array.isArray(tp) ? tp : [])
     } catch (err) {
-      setError(formatApiError(err))
-    }
-  }
-
-  const handleSlowestPRsPageChange = async (newPage: number) => {
-    if (!repoId) return
-    try {
-      const res = await getSlowestPRs(repoId, newPage, 10, filters)
-      setSlowestData(res.data || [])
-      setSlowestPage(res.page || 1)
-      setSlowestTotalPages(res.pages || 1)
-      setSlowestTotalResults(res.total || 0)
-    } catch (err) {
-      setError(formatApiError(err))
-    }
-  }
-
-  const handleContributorsPageChange = async (newPage: number) => {
-    if (!repoId) return
-    try {
-      const res = await getContributorActivity(repoId, newPage, 10, filters)
-      setContributorsData(res.data || [])
-      setContributorsPage(res.page || 1)
-      setContributorsTotalPages(res.pages || 1)
-      setContributorsTotalResults(res.total || 0)
-    } catch (err) {
-      setError(formatApiError(err))
-    }
-  }
-
-  const handlePRRiskPageChange = async (newPage: number) => {
-    if (!repoId) return
-    try {
-      const res = await getPRRisk(repoId, newPage, 15)
-      setPRRiskData(res.data || [])
-      setPRRiskPage(res.page || 1)
-      setPRRiskTotalPages(res.pages || 1)
-      setPRRiskTotalResults(res.total || 0)
-    } catch (err) {
-      setError(formatApiError(err))
-    }
-  }
-
-  const handleStaleAlertsPageChange = async (newPage: number) => {
-    if (!repoId) return
-    try {
-      const res = await getStaleAlerts(repoId, newPage, 10)
-      setStaleAlertsData(res.data || [])
-      setStaleAlertsPage(res.page || 1)
-      setStaleAlertsTotalPages(res.pages || 1)
-      setStaleAlertsTotalResults(res.total || 0)
-    } catch (err) {
-      setError(formatApiError(err))
-    }
-  }
-
-  const handleAnalyze = async (url: string, token?: string) => {
-    setIsLoading(true)
-    setError(null)
-    setRepoUrl(url)
-    setFilters(defaultFilters)
-
-    // Reset pagination to 1 for all views
-    setOldestPage(1)
-    setSlowestPage(1)
-    setContributorsPage(1)
-    setPRRiskPage(1)
-    setStaleAlertsPage(1)
-
-    try {
-      const result = await analyzeRepository(url, token)
-      setRepoId(result.repo_id)
-
-      const status = await getSyncStatus(result.repo_id)
-      setSyncStatus(status)
-
-      await loadDashboardData(result.repo_id, defaultFilters, false)
-    } catch (err: unknown) {
-      setError(formatApiError(err))
+      setPRError(formatApiError(err))
     } finally {
-      setIsLoading(false)
+      setLoadingPR(false)
     }
+  }, [])
+
+  const loadTableData = useCallback(async (
+    id: number, f: DashboardFiltersState,
+    oPg = oldestPage, sPg = slowestPage, cPg = contributorsPage,
+    rPg = prRiskPage, stPg = staleAlertsPage
+  ) => {
+    if (!id) return
+    try {
+      const [oldest, slowest, contrib, risk, stale] = await Promise.all([
+        getOldestPRs(id, oPg, 10, f), getSlowestPRs(id, sPg, 10, f),
+        getContributorActivity(id, cPg, 10, f), getPRRisk(id, rPg, 15),
+        getStaleAlerts(id, stPg, 10),
+      ])
+      setOldestPRs(oldest); setSlowestPRs(slowest); setContributors(contrib)
+      setPRRisk(risk); setStaleAlerts(stale)
+    } catch (err) {
+      console.error('Table data error:', err)
+    }
+  }, [oldestPage, slowestPage, contributorsPage, prRiskPage, staleAlertsPage])
+
+  useEffect(() => {
+    if (repoId && activeSection === 'pull_requests') {
+      loadTableData(repoId, filters)
+    }
+  }, [repoId, activeSection, oldestPage, slowestPage, contributorsPage, prRiskPage, staleAlertsPage])
+
+  // ─── Initial repo load + filter change ────────────────────────────────────
+
+  useEffect(() => {
+    if (repoId) {
+      loadPRData(repoId, filters)
+      if (activeSection === 'pull_requests') {
+        loadTableData(repoId, filters)
+      }
+    }
+  }, [filters, repoId])
+
+  useEffect(() => {
+    if (kpi) {
+      console.log(`[Telemetry][Frontend] Rendered total PRs: ${kpi.total_prs}`)
+    }
+  }, [kpi])
+
+  useEffect(() => {
+    if (monthlyFlow && monthlyFlow.length > 0) {
+      console.log(`[Telemetry][Frontend] Rendered monthly flow points: ${monthlyFlow.length}`)
+    }
+  }, [monthlyFlow])
+
+  useEffect(() => {
+    if (throughput && throughput.length > 0) {
+      console.log(`[Telemetry][Frontend] Rendered weekly throughput points: ${throughput.length}`)
+    }
+  }, [throughput])
+
+  // ─── Repository submission ─────────────────────────────────────────────────
+
+  const handleAnalyze = useCallback(async (url: string, token?: string) => {
+    setGlobalError(null)
+    setIsSyncing(true)
+    try {
+      const result = await analyzeRepository(url, token || githubToken || undefined)
+      const newRepoId: number = result.repo_id ?? result.id
+      setRepoId(newRepoId)
+      setRepoLabel(result.owner && result.repo ? `${result.owner}/${result.repo}` : url)
+      setFilters(defaultFilters)
+      setActiveSection('overview')
+
+      // Start polling sync status
+      const initialStatus = await getSyncStatus(newRepoId)
+      setSyncStatus(initialStatus as SyncStatusData)
+      startPolling(newRepoId)
+    } catch (err) {
+      setIsSyncing(false)
+      setGlobalError(formatApiError(err))
+    }
+  }, [githubToken, startPolling])
+
+  const handleSync = useCallback(async () => {
+    if (!repoId || !repoLabel) return
+    setIsSyncing(true)
+    const url = `https://github.com/${repoLabel}`
+    await handleAnalyze(url, githubToken)
+  }, [repoId, repoLabel, githubToken, handleAnalyze])
+
+  const handleTokenSave = (t: string) => {
+    saveGithubToken(t)
+    setGithubToken(t)
   }
 
-  const handleApplyFilters = () => {
-    if (repoId) loadDashboardData(repoId, filters)
-  }
+  // ─── Sync counts for sidebar badges ───────────────────────────────────────
 
-  const cycleAvg = formatDurationDisplay(
-    data?.kpi?.avg_cycle_time_display,
-    data?.kpi?.avg_cycle_time
-  )
-  const cycleMedian = formatDurationDisplay(
-    data?.kpi?.median_cycle_time_display,
-    data?.kpi?.median_cycle_time
-  )
-  const waitReview = formatDurationDisplay(
-    data?.kpi?.avg_wait_for_review_display,
-    data?.kpi?.avg_wait_for_review
-  )
-  const reviewDuration = formatDurationDisplay(
-    data?.kpi?.avg_review_duration_display,
-    data?.kpi?.avg_review_duration
-  )
+  const syncCounts = syncStatus ? {
+    total_prs: syncStatus.total_prs,
+    total_issues: syncStatus.total_issues,
+    total_branches: syncStatus.total_branches,
+    total_forks: syncStatus.total_forks,
+    total_workflow_runs: syncStatus.total_workflow_runs,
+    total_discussions: syncStatus.total_discussions,
+  } : undefined
 
-  const hasData = Boolean(data && repoId)
+  // ─── Render ────────────────────────────────────────────────────────────────
 
-  if (!authUser) {
-    return <AuthPanel onAuthenticated={(username) => setAuthUser(username)} />
-  }
+  const hasData = !!(repoId && syncStatus?.initial_sync_completed)
 
   return (
     <AppShell
-      hasData={hasData}
-      repoLabel={hasData ? repoLabelFromUrl(repoUrl) : undefined}
-      userLabel={`Signed in as ${authUser}`}
+      hasData={hasData || !!(repoId)}
+      repoLabel={repoLabel}
       activeSection={activeSection}
       onNavigate={setActiveSection}
-      headerActions={repoId ? <ExportButton repoId={repoId} filters={filters} /> : (
-        <button
-          type="button"
-          onClick={handleSignOut}
-          className="btn-secondary rounded-2xl px-4 py-2 text-sm font-semibold"
-        >
-          Sign out
-        </button>
-      )}
+      userLabel={userLabel}
+      syncCounts={syncCounts}
+      headerActions={
+        repoId ? (
+          <ExportButton repoId={repoId} filters={filters} />
+        ) : undefined
+      }
     >
-      <section id="section-analyze" className={hasData ? 'scroll-mt-8 mb-8' : ''}>
-        {hasData ? (
+      {/* ── Auth Panel (landing only) ── */}
+      {!repoId && (
+        <div className="space-y-6">
+          <AuthPanel onAuthenticated={(username) => setUserLabel(username)} />
+          {globalError && (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">Error:</span>
+                <span>{globalError}</span>
+              </div>
+            </div>
+          )}
           <RepositoryInput
             githubToken={githubToken}
-            onGithubTokenChange={handleGithubTokenChange}
+            onGithubTokenChange={handleTokenSave}
             onAnalyze={handleAnalyze}
-            isLoading={isLoading}
+            isLoading={isSyncing}
+            variant="hero"
           />
-        ) : (
-          <div className="landing-glow-wrap">
-            <div className="landing-glow-box">
-              <RepositoryInput
-                variant="hero"
-                githubToken={githubToken}
-                onGithubTokenChange={handleGithubTokenChange}
-                onAnalyze={handleAnalyze}
-                isLoading={isLoading}
-              />
-            </div>
-          </div>
-        )}
-      </section>
-
-      {error && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className={`flex items-start gap-3 rounded-2xl border border-palette-rose/30 bg-palette-rose-light p-4 ${hasData ? 'mb-8' : 'mt-4'}`}
-        >
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-palette-rose" />
-          <div>
-            <h3 className="font-semibold text-palette-rose">Analysis error</h3>
-            <p className="mt-1 text-sm text-midnight-200">{error}</p>
-          </div>
-        </motion.div>
+        </div>
       )}
 
-      {hasData && (
-        <>
-          <div className="mb-8">
-            <h2 className="page-heading">Manage your pull requests</h2>
-            <p className="page-subheading">
-              Track cycle time, merge health, and contributor activity for your repository.
-            </p>
-          </div>
+      {/* ── Dashboard ── */}
+      {repoId && (
+        <div className="space-y-6">
 
+          {/* Repository Status Panel (always visible) */}
           {syncStatus && (
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="card card-glow mb-8 bg-white/[0.02] border-white/[0.06] backdrop-blur-xl p-6"
-            >
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-3 mb-2">
-                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Database className="w-5 h-5 text-indigo-400" />
-                      Repository Sync Status
-                    </h3>
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
-                      syncStatus.sync_status === 'SYNCING'
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        : syncStatus.sync_status === 'COMPLETED'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : syncStatus.sync_status === 'FAILED'
-                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
-                    }`}>
-                      {syncStatus.sync_status === 'SYNCING' && <RefreshCw className="w-3 h-3 animate-spin" />}
-                      {syncStatus.sync_status === 'COMPLETED' && <CheckCircle2 className="w-3 h-3" />}
-                      {syncStatus.sync_status === 'FAILED' && <XCircle className="w-3 h-3" />}
-                      {syncStatus.sync_status === 'IDLE' && <Info className="w-3 h-3" />}
-                      {syncStatus.sync_status}
-                    </span>
-                    <span className="text-xs bg-white/[0.04] text-midnight-300 border border-white/[0.08] px-3 py-1 rounded-full font-medium">
-                      Scope: Full Repository Ingestion
-                    </span>
-                  </div>
-                  <p className="text-sm text-midnight-200 mb-4 font-medium">
-                    {syncStatus.sync_progress || 'No sync currently active.'}
-                  </p>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 border-t border-white/[0.04] pt-4">
-                    <div>
-                      <p className="text-xs text-midnight-400 uppercase tracking-wider">Total PRs in Database</p>
-                      <p className="text-lg font-bold text-white mt-0.5">{syncStatus.total_prs?.toLocaleString() ?? 0}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-midnight-400 uppercase tracking-wider">Last Sync Time</p>
-                      <p className="text-sm font-semibold text-white mt-1">
-                        {syncStatus.last_successful_sync 
-                          ? new Date(syncStatus.last_successful_sync).toLocaleString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })
-                          : 'Never'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-midnight-400 uppercase tracking-wider">GitHub API Budget</p>
-                      <p className="text-sm font-semibold text-white mt-1">
-                        {syncStatus.rate_limit_remaining !== null 
-                          ? `${syncStatus.rate_limit_remaining.toLocaleString()} / ${syncStatus.rate_limit_limit?.toLocaleString()}`
-                          : 'Unknown'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-midnight-400 uppercase tracking-wider">API Budget Reset</p>
-                      <p className="text-sm font-semibold text-white mt-1">
-                        {syncStatus.rate_limit_reset
-                          ? new Date(syncStatus.rate_limit_reset).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })
-                          : 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  {syncStatus.sync_status === 'FAILED' && syncStatus.error_message && (
-                    <div className="mt-4 p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-xs">
-                      <strong>Sync Failure Reason:</strong> {syncStatus.error_message}
-                    </div>
-                  )}
-                </div>
-                
-                <div className="flex flex-col items-stretch md:items-end justify-center gap-2">
-                  <button
-                    disabled={syncStatus.sync_status === 'SYNCING' || isLoading}
-                    onClick={() => handleAnalyze(repoUrl, githubToken)}
-                    className="btn-primary rounded-xl px-5 py-2.5 text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/10"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${(syncStatus.sync_status === 'SYNCING' || isLoading) ? 'animate-spin' : ''}`} />
-                    {syncStatus.sync_status === 'SYNCING' ? 'Syncing...' : 'Sync Now'}
-                  </button>
-                  <span className="text-[10px] text-midnight-400 text-center md:text-right font-medium">
-                    * Removes pagination limits & fetches full history
-                  </span>
-                </div>
+            <RepositoryStatusPanel
+              repoLabel={repoLabel}
+              syncStatus={syncStatus}
+              onSync={handleSync}
+              isSyncing={isSyncing}
+            />
+          )}
+
+          {/* Syncing banner */}
+          {isSyncing && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-4 text-indigo-300 text-sm">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                <span>{syncStatus?.sync_progress || 'Ingesting repository data...'}</span>
               </div>
             </motion.div>
           )}
 
-          <section id="section-overview" className="scroll-mt-8 mb-10">
-            <DashboardFilters
-              authors={authors}
-              filters={filters}
-              onChange={setFilters}
-              onApply={handleApplyFilters}
+          {/* ── MODULE DISPATCHER ── */}
+
+          {/* OVERVIEW */}
+          {activeSection === 'overview' && (
+            <OverviewSection
+              kpi={kpi} monthlyFlow={monthlyFlow} throughput={throughput}
+              syncStatus={syncStatus} repoLabel={repoLabel}
+              onNavigate={setActiveSection}
             />
+          )}
 
-            <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-              <div className="lg:col-span-9">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <KPICard
-                    title="Open PRs"
-                    value={data.kpi.open_prs}
-                    icon={<FolderGit2 className="h-5 w-5" />}
-                    unit="open"
-                    accent="emerald"
-                  />
-                  <KPICard
-                    title="Stale (>30d)"
-                    value={data.kpi.stale_prs}
-                    icon={<AlertOctagon className="h-5 w-5" />}
-                    unit="attention"
-                    accent="amber"
-                  />
-                  <KPICard
-                    title="Avg cycle"
-                    value={cycleAvg.value}
-                    icon={<Clock className="h-5 w-5" />}
-                    unit={cycleAvg.unit}
-                    accent="orange"
-                  />
-                  <KPICard
-                    title="Median cycle"
-                    value={cycleMedian.value}
-                    icon={<Timer className="h-5 w-5" />}
-                    unit={cycleMedian.unit}
-                    accent="lime"
-                  />
-                  <KPICard
-                    title="Wait for review"
-                    value={waitReview.value}
-                    icon={<Eye className="h-5 w-5" />}
-                    unit={waitReview.unit}
-                    accent="rose"
-                  />
-                  <KPICard
-                    title="Review duration"
-                    value={reviewDuration.value}
-                    icon={<Eye className="h-5 w-5" />}
-                    unit={reviewDuration.unit}
-                    accent="teal"
-                  />
-                  <KPICard
-                    title="Merge rate"
-                    value={data.kpi.merge_rate}
-                    icon={<GitMerge className="h-5 w-5" />}
-                    unit="%"
-                    accent="teal"
-                  />
-                  <KPICard
-                    title="Reviews / PR"
-                    value={data.kpi.avg_reviews_per_pr}
-                    icon={<MessageSquare className="h-5 w-5" />}
-                    unit="avg"
-                    accent="orange"
-                  />
-                </div>
-              </div>
-              <div className="lg:col-span-3">
-                <MergeRateDonut
-                  mergeRate={data.kpi.merge_rate}
-                  openPrs={data.kpi.open_prs}
-                  stalePrs={data.kpi.stale_prs}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section id="section-insights" className="scroll-mt-8 mb-10 space-y-6">
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <StalePRAlerts
-                data={staleAlertsData}
-                page={staleAlertsPage}
-                totalPages={staleAlertsTotalPages}
-                totalResults={staleAlertsTotalResults}
-                onPageChange={handleStaleAlertsPageChange}
-              />
-              <PRRiskPanel
-                data={prRiskData}
-                page={prRiskPage}
-                totalPages={prRiskTotalPages}
-                totalResults={prRiskTotalResults}
-                onPageChange={handlePRRiskPageChange}
-              />
-            </div>
-          </section>
-
-          <section id="section-charts" className="scroll-mt-8 mb-10 space-y-6">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <MonthlyFlowChart data={data.monthlyFlow} />
-              <ThroughputChart data={data.throughput} />
-            </div>
-            <ContributorChart data={contributorsData} />
-            <ReviewTurnaroundChart data={data.reviewTurnaround} />
-          </section>
-
-          <section id="section-tables" className="scroll-mt-8 mb-10 space-y-6">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <DataTable
-                title="Oldest open PRs"
-                columns={[
-                  { key: 'number', label: '#' },
-                  { key: 'title', label: 'Title' },
-                  { key: 'age_days', label: 'Age' },
-                  { key: 'author', label: 'Author' },
-                  {
-                    key: 'created_at',
-                    label: 'Created',
-                    render: (value: string) => {
-                      if (!value) return '—'
-                      return new Date(value).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: '2-digit',
-                      })
-                    },
-                  },
-                ]}
-                data={oldestData}
-                page={oldestPage}
-                totalPages={oldestTotalPages}
-                totalResults={oldestTotalResults}
-                onPageChange={handleOldestPRsPageChange}
-              />
-              <DataTable
-                title="Slowest merged PRs"
-                columns={[
-                  { key: 'number', label: '#' },
-                  { key: 'title', label: 'Title' },
-                  {
-                    key: 'cycle_time_display',
-                    label: 'Cycle',
-                    render: (_: unknown, row?: any) => {
-                      const d = row?.cycle_time_display
-                      if (d) return `${d.value} ${d.unit}`
-                      const f = formatDurationFromDays(row?.cycle_time_days || 0)
-                      return `${f.value} ${f.unit}`
-                    },
-                  },
-                  { key: 'author', label: 'Author' },
-                  {
-                    key: 'merged_at',
-                    label: 'Merged',
-                    render: (value: string) => {
-                      if (!value) return '—'
-                      return new Date(value).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: '2-digit',
-                      })
-                    },
-                  },
-                ]}
-                data={slowestData}
-                page={slowestPage}
-                totalPages={slowestTotalPages}
-                totalResults={slowestTotalResults}
-                onPageChange={handleSlowestPRsPageChange}
-              />
-            </div>
-            <DataTable
-              title="Contributor activity"
-              columns={[
-                { key: 'username', label: 'User' },
-                { key: 'total_prs', label: 'PRs' },
-                { key: 'merged_prs', label: 'Merged' },
-                {
-                  key: 'avg_cycle_time_display',
-                  label: 'Avg cycle',
-                  render: (_: unknown, row?: any) => {
-                    const d = row?.avg_cycle_time_display
-                    if (d) return `${d.value} ${d.unit}`
-                    return `${row?.avg_cycle_time || 0}d`
-                  },
-                },
-                { key: 'merge_rate', label: 'Merge %' },
-              ]}
-              data={contributorsData}
-              page={contributorsPage}
-              totalPages={contributorsTotalPages}
-              totalResults={contributorsTotalResults}
-              onPageChange={handleContributorsPageChange}
+          {/* PULL REQUESTS */}
+          {activeSection === 'pull_requests' && (
+            <PullRequestsSection
+              repoId={repoId} kpi={kpi} filters={filters} authors={authors}
+              onFiltersChange={setFilters} loading={loadingPR} error={prError}
+              oldestPRs={oldestPRs} slowestPRs={slowestPRs} contributors={contributors}
+              monthlyFlow={monthlyFlow} throughput={throughput}
+              prRisk={prRisk} staleAlerts={staleAlerts}
+              oldestPage={oldestPage} onOldestPage={setOldestPage}
+              slowestPage={slowestPage} onSlowestPage={setSlowestPage}
+              contributorsPage={contributorsPage} onContributorsPage={setContributorsPage}
+              prRiskPage={prRiskPage} onPRRiskPage={setPRRiskPage}
+              staleAlertsPage={staleAlertsPage} onStaleAlertsPage={setStaleAlertsPage}
             />
-          </section>
-        </>
+          )}
+
+          {/* ISSUES */}
+          {activeSection === 'issues' && <IssuesPanel repoId={repoId} />}
+
+          {/* BRANCHES */}
+          {activeSection === 'branches' && <BranchesPanel repoId={repoId} />}
+
+          {/* CI/CD */}
+          {activeSection === 'cicd' && <CICDPanel repoId={repoId} />}
+
+          {/* FORKS */}
+          {activeSection === 'forks' && <ForksPanel repoId={repoId} />}
+
+          {/* PROJECTS */}
+          {activeSection === 'projects' && <ProjectsPanel repoId={repoId} />}
+
+          {/* DISCUSSIONS */}
+          {activeSection === 'discussions' && <DiscussionsPanel repoId={repoId} />}
+
+          {/* REPO HEALTH */}
+          {activeSection === 'repo_health' && <RepoHealthPanel repoId={repoId} repoLabel={repoLabel} />}
+
+          {/* SETTINGS */}
+          {activeSection === 'settings' && (
+            <SettingsPanel repoLabel={repoLabel} onTokenChange={handleTokenSave} />
+          )}
+        </div>
       )}
     </AppShell>
+  )
+}
+
+// ─── Overview Section ─────────────────────────────────────────────────────────
+
+function OverviewSection({ kpi, monthlyFlow, throughput, syncStatus, repoLabel, onNavigate }: any) {
+  const cards = [
+    { label: 'Total PRs', value: kpi?.total_prs?.toLocaleString() ?? '—', icon: <FolderGit2 />, color: 'from-indigo-500 to-violet-600', onClick: () => onNavigate('pull_requests') },
+    { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', icon: <GitMerge />, color: 'from-emerald-500 to-teal-600', onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', icon: <Clock />, color: 'from-amber-500 to-orange-600', onClick: () => onNavigate('pull_requests') },
+    { label: 'Open Issues', value: syncStatus?.total_issues?.toLocaleString() ?? '—', icon: <AlertCircle />, color: 'from-rose-500 to-pink-600', onClick: () => onNavigate('issues') },
+    { label: 'Branches', value: syncStatus?.total_branches?.toLocaleString() ?? '—', icon: <Timer />, color: 'from-sky-500 to-cyan-600', onClick: () => onNavigate('branches') },
+    { label: 'CI/CD Runs', value: syncStatus?.total_workflow_runs?.toLocaleString() ?? '—', icon: <Zap />, color: 'from-violet-500 to-purple-600', onClick: () => onNavigate('cicd') },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {cards.map((c) => (
+          <motion.button key={c.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            onClick={c.onClick}
+            className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5 flex flex-col gap-3 text-left hover:bg-white/[0.05] transition-all group">
+            <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${c.color} text-white group-hover:scale-105 transition-transform`}>
+              {c.icon}
+            </div>
+            <div>
+              <p className="text-xl font-bold text-white">{c.value}</p>
+              <p className="text-xs text-white/50 mt-0.5">{c.label}</p>
+            </div>
+          </motion.button>
+        ))}
+      </div>
+
+      {(monthlyFlow?.length > 0 || throughput?.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {monthlyFlow?.length > 0 && (
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
+              <h3 className="text-sm font-semibold text-white mb-4">Monthly PR Flow</h3>
+              <MonthlyFlowChart data={monthlyFlow} />
+            </div>
+          )}
+          {throughput?.length > 0 && (
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
+              <h3 className="text-sm font-semibold text-white mb-4">Weekly Throughput</h3>
+              <ThroughputChart data={throughput} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Pull Requests Section (preserved from original) ─────────────────────────
+
+function PullRequestsSection({
+  repoId, kpi, filters, authors, onFiltersChange, loading, error,
+  oldestPRs, slowestPRs, contributors, monthlyFlow, throughput,
+  prRisk, staleAlerts,
+  oldestPage, onOldestPage, slowestPage, onSlowestPage,
+  contributorsPage, onContributorsPage, prRiskPage, onPRRiskPage,
+  staleAlertsPage, onStaleAlertsPage,
+}: any) {
+  const [localFilters, setLocalFilters] = useState(filters)
+
+  useEffect(() => {
+    setLocalFilters(filters)
+  }, [filters])
+
+  return (
+    <div className="space-y-6">
+      <DashboardFilters
+        filters={localFilters}
+        authors={authors}
+        onChange={setLocalFilters}
+        onApply={() => onFiltersChange(localFilters)}
+      />
+
+      {error && (
+        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-rose-300 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      {kpi && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <KPICard icon={<FolderGit2 />} title="Total PRs" value={kpi.total_prs?.toLocaleString() ?? '—'} accent="teal" />
+          <KPICard icon={<GitMerge />} title="Merge Rate" value={`${kpi.merge_rate ?? 0}%`} accent="emerald" />
+          <KPICard icon={<Clock />} title="Avg Cycle Time" value={formatDurationFromDays(kpi.avg_cycle_time).value} unit={formatDurationFromDays(kpi.avg_cycle_time).unit} accent="amber" />
+          <KPICard icon={<Eye />} title="Avg Review Wait" value={formatDurationDisplay(kpi.avg_review_wait).value} unit={formatDurationDisplay(kpi.avg_review_wait).unit} accent="lime" />
+          <KPICard icon={<MessageSquare />} title="Avg Review Duration" value={formatDurationDisplay(kpi.avg_review_duration).value} unit={formatDurationDisplay(kpi.avg_review_duration).unit} accent="orange" />
+          <KPICard icon={<AlertOctagon />} title="Stale PRs" value={(kpi.stale_prs ?? 0).toLocaleString()} accent="rose" />
+        </div>
+      )}
+
+      {/* Charts */}
+      {(monthlyFlow?.length > 0 || throughput?.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {monthlyFlow?.length > 0 && (
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
+              <h3 className="text-sm font-semibold text-white mb-4">Monthly PR Flow</h3>
+              <MonthlyFlowChart data={monthlyFlow} />
+            </div>
+          )}
+          {kpi && (
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
+              <h3 className="text-sm font-semibold text-white mb-4">Merge Rate</h3>
+              <MergeRateDonut mergeRate={kpi.merge_rate ?? 0} openPrs={kpi.open_prs ?? 0} stalePrs={kpi.stale_prs ?? 0} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {throughput?.length > 0 && (
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5">
+          <h3 className="text-sm font-semibold text-white mb-4">Weekly Throughput</h3>
+          <ThroughputChart data={throughput} />
+        </div>
+      )}
+
+      {/* PR Intelligence Tables */}
+      {prRisk && (
+        <PRRiskPanel data={prRisk} page={prRiskPage} onPageChange={onPRRiskPage} />
+      )}
+      {staleAlerts && (
+        <StalePRAlerts data={staleAlerts} page={staleAlertsPage} onPageChange={onStaleAlertsPage} />
+      )}
+      {oldestPRs && (
+        <DataTable
+          title="Oldest Open PRs"
+          icon={<Clock className="h-4 w-4" />}
+          columns={['PR', 'Title', 'Author', 'Age', 'Reviews']}
+          data={oldestPRs?.data ?? []}
+          page={oldestPage} pages={oldestPRs?.pages ?? 1}
+          onPageChange={onOldestPage}
+          renderRow={(row: any) => (
+            <>
+              <td className="py-2.5 pr-4 font-mono text-white/40 text-xs">#{row.pr_number}</td>
+              <td className="py-2.5 pr-4 text-white/80 text-xs max-w-[220px] truncate">{row.title}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.author}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.age_days}d</td>
+              <td className="py-2.5 text-white/50 text-xs">{row.review_count}</td>
+            </>
+          )}
+        />
+      )}
+      {slowestPRs && (
+        <DataTable
+          title="Slowest Merged PRs"
+          icon={<Timer className="h-4 w-4" />}
+          columns={['PR', 'Title', 'Author', 'Cycle Time', 'Reviews']}
+          data={slowestPRs?.data ?? []}
+          page={slowestPage} pages={slowestPRs?.pages ?? 1}
+          onPageChange={onSlowestPage}
+          renderRow={(row: any) => (
+            <>
+              <td className="py-2.5 pr-4 font-mono text-white/40 text-xs">#{row.pr_number}</td>
+              <td className="py-2.5 pr-4 text-white/80 text-xs max-w-[220px] truncate">{row.title}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.author}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
+              <td className="py-2.5 text-white/50 text-xs">{row.review_count}</td>
+            </>
+          )}
+        />
+      )}
+      {contributors && (
+        <DataTable
+          title="Contributor Activity"
+          icon={<Eye className="h-4 w-4" />}
+          columns={['Author', 'PRs', 'Merged', 'Avg Cycle Time', 'Avg Review Wait']}
+          data={contributors?.data ?? []}
+          page={contributorsPage} pages={contributors?.pages ?? 1}
+          onPageChange={onContributorsPage}
+          renderRow={(row: any) => (
+            <>
+              <td className="py-2.5 pr-4 text-white/80 text-xs font-semibold">{row.username}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.total_prs}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{row.merged_prs}</td>
+              <td className="py-2.5 pr-4 text-white/50 text-xs">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
+              <td className="py-2.5 text-white/50 text-xs">{renderDuration(formatDurationDisplay(row.avg_review_time))}</td>
+            </>
+          )}
+        />
+      )}
+    </div>
   )
 }
