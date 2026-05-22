@@ -75,6 +75,7 @@ class Repository(Base):
     total_forks = Column(Integer, default=0)
     total_workflow_runs = Column(Integer, default=0)
     total_discussions = Column(Integer, default=0)
+    total_projects = Column(Integer, default=0)
 
     # Legacy sync telemetry
     error_message = Column(Text, nullable=True)

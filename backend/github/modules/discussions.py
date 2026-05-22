@@ -27,6 +27,21 @@ def sync_discussions(
     Returns count of discussions synced.
     """
     print(f"[Telemetry][Discussions] Syncing discussions for {owner}/{repo_name}")
+
+    features = gql_client.fetch_repository_module_features(owner, repo_name)
+    print(
+        f"[Telemetry][Discussions] Feature probe: enabled={features.get('discussions_enabled')}, "
+        f"github_total={features.get('discussions_total')}, status={features.get('status')}"
+    )
+    if features.get("status") == "auth":
+        print("[Telemetry][Discussions] Aborting sync — invalid GitHub token.")
+        return 0
+    if not features.get("discussions_enabled") and features.get("discussions_total", 0) == 0:
+        print(f"[Telemetry][Discussions] Discussions not enabled on {owner}/{repo_name} — valid zero state.")
+        repo.total_discussions = 0
+        db.commit()
+        return 0
+
     total_synced = 0
     cursor = None
     has_next = True
@@ -121,7 +136,7 @@ def _upsert_discussion(db: Session, repo: Repository, owner: str, repo_name: str
     answer_chosen = item.get("answer") is not None
     comment_count = (item.get("comments") or {}).get("totalCount", 0)
     reaction_count = (item.get("reactions") or {}).get("totalCount", 0)
-    participant_count = (item.get("participants") or {}).get("totalCount", 0)
+    participant_count = 0  # GitHub GraphQL Discussion type has no participants field
     created_at = _parse_dt(item.get("createdAt"))
     updated_at = _parse_dt(item.get("updatedAt"))
 

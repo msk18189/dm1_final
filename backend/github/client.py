@@ -219,8 +219,77 @@ class GitHubClient:
         page_info = conn.get("pageInfo", {"hasNextPage": False, "endCursor": None})
         return prs or [], page_info, rate_limit
 
+    def fetch_repository_module_features(self, owner: str, repo: str) -> Dict[str, Any]:
+        """
+        Probe whether Discussions and Projects are available for a repository.
+        Used before sync to avoid silent failures and to log accurate telemetry.
+        """
+        query = """
+        query($owner: String!, $repo: String!) {
+            repository(owner: $owner, name: $repo) {
+                hasDiscussionsEnabled
+                discussions { totalCount }
+                projectsV2(first: 1) { totalCount }
+            }
+        }
+        """
+        try:
+            data = self.query(query, {"owner": owner, "repo": repo})
+            repo_data = data.get("repository")
+            if not repo_data:
+                return {
+                    "accessible": False,
+                    "discussions_enabled": False,
+                    "discussions_total": 0,
+                    "projects_total": 0,
+                    "status": "not_found",
+                    "message": "Repository not found or token cannot access it.",
+                }
+            discussions_conn = repo_data.get("discussions") or {}
+            projects_conn = repo_data.get("projectsV2") or {}
+            discussions_total = discussions_conn.get("totalCount", 0) or 0
+            projects_total = projects_conn.get("totalCount", 0) or 0
+            discussions_enabled = bool(repo_data.get("hasDiscussionsEnabled"))
+            return {
+                "accessible": True,
+                "discussions_enabled": discussions_enabled,
+                "discussions_total": discussions_total,
+                "projects_total": projects_total,
+                "status": "ok",
+                "message": None,
+            }
+        except Exception as e:
+            status = self._classify_module_error(str(e), "repository")
+            print(f"[Telemetry][Features] {owner}/{repo} feature probe failed ({status}): {e}")
+            return {
+                "accessible": status != "auth",
+                "discussions_enabled": False,
+                "discussions_total": 0,
+                "projects_total": 0,
+                "status": status,
+                "message": str(e)[:300],
+            }
+
+    @staticmethod
+    def _classify_module_error(error_msg: str, module: str) -> str:
+        """Classify GraphQL/HTTP errors for discussions/projects modules."""
+        msg = error_msg.lower()
+        if "bad credentials" in msg or "401" in msg:
+            return "auth"
+        if "forbidden" in msg or "resource not accessible" in msg or "must have push access" in msg:
+            return "forbidden"
+        if module == "discussions" and ("discussions" in msg and ("disabled" in msg or "not enabled" in msg)):
+            return "disabled"
+        if module == "projects" and ("projects" in msg and ("disabled" in msg or "not supported" in msg)):
+            return "disabled"
+        if "could not resolve to a repository" in msg or "not_found" in msg:
+            return "not_found"
+        if "rate limit" in msg:
+            return "rate_limit"
+        return "error"
+
     def fetch_discussions(self, owner: str, repo: str, first: int = 50, cursor: str = None) -> Tuple[List[Dict], Dict]:
-        """Fetch discussions via GraphQL (available on public repos with discussions enabled)."""
+        """Fetch discussions via GraphQL (repository must have discussions enabled)."""
         query = """
         query($owner: String!, $repo: String!, $first: Int!, $cursor: String) {
             repository(owner: $owner, name: $repo) {
@@ -237,7 +306,6 @@ class GitHubClient:
                         answer { id }
                         comments { totalCount }
                         reactions { totalCount }
-                        participants { totalCount }
                         createdAt
                         updatedAt
                     }
@@ -248,23 +316,32 @@ class GitHubClient:
         variables = {"owner": owner, "repo": repo, "first": first, "cursor": cursor}
         try:
             data = self.query(query, variables)
-            repo_data = data.get("repository", {})
-            conn = repo_data.get("discussions", {}) if repo_data else {}
-            nodes = conn.get("nodes", []) or []
+            repo_data = data.get("repository")
+            if not repo_data:
+                print(f"[Telemetry][Discussions] API response: repository=null (check token/repo visibility)")
+                return [], {"hasNextPage": False, "endCursor": None}
+            conn = repo_data.get("discussions") or {}
+            nodes = [n for n in (conn.get("nodes") or []) if n]
             page_info = conn.get("pageInfo", {"hasNextPage": False, "endCursor": None})
+            print(f"[Telemetry][Discussions] API response count: {len(nodes)} discussions fetched (page)")
             return nodes, page_info
         except Exception as e:
-            # Discussions may not be enabled — return empty gracefully
-            print(f"[Discussions] Could not fetch discussions: {e}")
+            status = self._classify_module_error(str(e), "discussions")
+            print(f"[Telemetry][Discussions] Fetch failed ({status}): {e}")
+            if status == "auth":
+                print("[Telemetry][Discussions] Token invalid or expired — check GITHUB_TOKEN / user PAT.")
+            elif status == "forbidden":
+                print("[Telemetry][Discussions] Token lacks access to this repository (private repo needs repo scope).")
             return [], {"hasNextPage": False, "endCursor": None}
 
     def fetch_projects_v2(self, owner: str, repo: str, first: int = 20, cursor: str = None) -> Tuple[List[Dict], Dict]:
-        """Fetch GitHub Projects v2 via GraphQL."""
+        """Fetch GitHub Projects v2 linked to a repository via GraphQL."""
         query = """
         query($owner: String!, $repo: String!, $first: Int!, $cursor: String) {
             repository(owner: $owner, name: $repo) {
                 projectsV2(first: $first, after: $cursor) {
                     pageInfo { hasNextPage endCursor }
+                    totalCount
                     nodes {
                         id
                         number
@@ -283,13 +360,28 @@ class GitHubClient:
         variables = {"owner": owner, "repo": repo, "first": first, "cursor": cursor}
         try:
             data = self.query(query, variables)
-            repo_data = data.get("repository", {})
-            conn = repo_data.get("projectsV2", {}) if repo_data else {}
-            nodes = conn.get("nodes", []) or []
+            repo_data = data.get("repository")
+            if not repo_data:
+                print(f"[Telemetry][Projects] API response: repository=null (check token/repo visibility)")
+                return [], {"hasNextPage": False, "endCursor": None}
+            conn = repo_data.get("projectsV2") or {}
+            raw_nodes = conn.get("nodes") or []
+            nodes = [n for n in raw_nodes if n]
+            null_count = len(raw_nodes) - len(nodes)
+            if null_count:
+                print(
+                    f"[Telemetry][Projects] API returned {null_count} null project node(s) "
+                    f"(likely missing read:project scope on token). "
+                    f"totalCount={conn.get('totalCount', '?')}"
+                )
             page_info = conn.get("pageInfo", {"hasNextPage": False, "endCursor": None})
+            print(f"[Telemetry][Projects] API response count: {len(nodes)} projects fetched (page)")
             return nodes, page_info
         except Exception as e:
-            print(f"[Projects v2] Could not fetch projects v2: {e}")
+            status = self._classify_module_error(str(e), "projects")
+            print(f"[Telemetry][Projects] Fetch failed ({status}): {e}")
+            if status == "forbidden":
+                print("[Telemetry][Projects] Token may need read:project scope for Projects v2.")
             return [], {"hasNextPage": False, "endCursor": None}
 
     def parse_pr_data(self, pr: Dict) -> Dict:
@@ -582,7 +674,18 @@ class GitHubClient:
                     }
                 }
 
-        elif "discussions" in query:
+        elif "hasDiscussionsEnabled" in query:
+            return {
+                "data": {
+                    "repository": {
+                        "hasDiscussionsEnabled": True,
+                        "discussions": {"totalCount": 5},
+                        "projectsV2": {"totalCount": 3},
+                    }
+                }
+            }
+
+        elif "discussions(first" in query or "discussions(first:" in query.replace(" ", ""):
             nodes = []
             for num in range(1, 6):
                 nodes.append({
@@ -596,7 +699,6 @@ class GitHubClient:
                     "answer": {"id": "ans_1"} if num % 2 == 0 else None,
                     "comments": {"totalCount": num * 2},
                     "reactions": {"totalCount": num},
-                    "participants": {"totalCount": num + 1},
                     "createdAt": "2026-01-01T00:00:00Z",
                     "updatedAt": "2026-01-02T00:00:00Z"
                 })
@@ -637,23 +739,24 @@ class GitHubClient:
             }
 
         elif "repository" in query:
-            return {
-                "data": {
-                    "repository": {
-                        "isPrivate": False,
-                        "name": repo,
-                        "owner": {"login": owner},
-                        "diskUsage": 12345,
-                        "stargazerCount": 42,
-                        "watchers": {"totalCount": 10},
-                        "primaryLanguage": {"name": "Python"},
-                        "defaultBranchRef": {"name": "main"},
-                        "description": "Mocked Repo Description",
-                        "homepageUrl": "https://mock.homepage.url",
-                        "forkCount": 15,
-                    }
-                }
+            repo_payload = {
+                "isPrivate": False,
+                "name": repo,
+                "owner": {"login": owner},
+                "diskUsage": 12345,
+                "stargazerCount": 42,
+                "watchers": {"totalCount": 10},
+                "primaryLanguage": {"name": "Python"},
+                "defaultBranchRef": {"name": "main"},
+                "description": "Mocked Repo Description",
+                "homepageUrl": "https://mock.homepage.url",
+                "forkCount": 15,
             }
+            if "hasDiscussionsEnabled" in query:
+                repo_payload["hasDiscussionsEnabled"] = True
+                repo_payload["discussions"] = {"totalCount": 5}
+                repo_payload["projectsV2"] = {"totalCount": 3}
+            return {"data": {"repository": repo_payload}}
 
         return {"data": {}}
 
@@ -687,6 +790,25 @@ class GitHubRestClient:
                 self.session.headers["Authorization"] = f"Bearer {self.token}"
             else:
                 self.session.headers["Authorization"] = f"token {self.token}"
+
+    def get_token_scopes(self) -> Dict[str, Any]:
+        """Return OAuth scopes granted to the current token (from response headers)."""
+        if not self.token:
+            return {"has_token": False, "scopes": [], "suggested": ["public_repo", "read:project"]}
+        try:
+            resp = self._get(f"{self.BASE_URL}/rate_limit")
+            raw = resp.headers.get("X-OAuth-Scopes") or resp.headers.get("x-oauth-scopes") or ""
+            scopes = [s.strip() for s in raw.split(",") if s.strip()]
+            print(f"[Telemetry][Auth] Token scopes: {scopes or '(none reported — fine-grained PAT)'}")
+            return {
+                "has_token": True,
+                "scopes": scopes,
+                "has_project_scope": "project" in raw or "read:project" in scopes,
+                "suggested": ["repo", "read:project"] if not scopes else [],
+            }
+        except Exception as e:
+            print(f"[Telemetry][Auth] Could not read token scopes: {e}")
+            return {"has_token": True, "scopes": [], "error": str(e)[:200]}
 
     def _handle_rate_limit(self, response: requests.Response):
         """Check rate limit headers and sleep if needed."""
@@ -832,10 +954,7 @@ class GitHubRestClient:
             params["since"] = since
 
         for page_items in self._paginate(url, params):
-            # Filter out pull requests (they appear in this endpoint but have a 'pull_request' key)
-            issues_only = [item for item in page_items if not item.get("pull_request")]
-            if issues_only:
-                yield issues_only
+            yield page_items
 
     def get_issue_comments(self, owner: str, repo: str, issue_number: int) -> List[Dict]:
         """Fetch all comments for a specific issue."""
@@ -1012,15 +1131,76 @@ class GitHubRestClient:
         url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
         return self.get_all_pages(url, {"per_page": 100})
 
-    def get_pr_files(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
-        """Get changed files for a PR via REST."""
+    def fetch_pull_request_files(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
+        """
+        Fetch all changed files for a PR via REST with full pagination.
+        GET /repos/{owner}/{repo}/pulls/{pr_number}/files
+        """
         url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls/{pr_number}/files"
-        return self.get_all_pages(url, {"per_page": 100})
+        return self._fetch_pr_rest_paginated(url, owner, repo, pr_number, "files")
+
+    def fetch_pull_request_commits(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
+        """
+        Fetch all commits for a PR via REST with full pagination.
+        GET /repos/{owner}/{repo}/pulls/{pr_number}/commits
+        """
+        url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls/{pr_number}/commits"
+        return self._fetch_pr_rest_paginated(url, owner, repo, pr_number, "commits")
+
+    def get_pr_files(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
+        """Alias for fetch_pull_request_files."""
+        return self.fetch_pull_request_files(owner, repo, pr_number)
 
     def get_pr_commits(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
-        """Get commits for a PR via REST."""
-        url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls/{pr_number}/commits"
-        return self.get_all_pages(url, {"per_page": 100})
+        """Alias for fetch_pull_request_commits."""
+        return self.fetch_pull_request_commits(owner, repo, pr_number)
+
+    def _fetch_pr_rest_paginated(
+        self,
+        url: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        resource: str,
+    ) -> List[Dict]:
+        """
+        Paginate a PR sub-resource (commits/files) until exhausted.
+        Logs telemetry for pages processed, items fetched, and API failures.
+        """
+        results: List[Dict] = []
+        pages_processed = 0
+        params = {"per_page": 100}
+
+        try:
+            for page_items in self._paginate(url, params):
+                pages_processed += 1
+                if not page_items:
+                    print(
+                        f"[Telemetry][PR {resource}] {owner}/{repo}#{pr_number}: "
+                        f"empty page {pages_processed}, stopping pagination"
+                    )
+                    break
+                if isinstance(page_items, list):
+                    results.extend(page_items)
+                elif isinstance(page_items, dict):
+                    results.append(page_items)
+                print(
+                    f"[Telemetry][PR {resource}] {owner}/{repo}#{pr_number}: "
+                    f"page {pages_processed} — {len(page_items) if isinstance(page_items, list) else 1} item(s)"
+                )
+
+            print(
+                f"[Telemetry][PR {resource}] {owner}/{repo}#{pr_number}: "
+                f"fetched={len(results)}, pages_processed={pages_processed}"
+            )
+            return results
+
+        except Exception as e:
+            print(
+                f"[Telemetry][PR {resource}] API failure for {owner}/{repo}#{pr_number} "
+                f"after {pages_processed} page(s), fetched_so_far={len(results)}: {e}"
+            )
+            raise
 
     def _mock_get(self, url: str, params: Dict = None) -> Any:
         from urllib.parse import urlparse, parse_qs
@@ -1300,7 +1480,56 @@ class GitHubRestClient:
         if path.endswith("/projects"):
             return MockResponse([])
 
-        # 9. Pull Requests details fallback
+        # 9. PR commits
+        commits_match = re.match(
+            r"^/repos/([^/]+)/([^/]+)/pulls/(\d+)/commits$", path
+        )
+        if commits_match:
+            pr_num = int(commits_match.group(3))
+            mock_commits = [
+                {
+                    "sha": f"mock_commit_{pr_num}_1",
+                    "commit": {
+                        "message": f"Mock commit 1 for PR #{pr_num}",
+                        "author": {"name": "mock_author", "date": "2026-05-20T12:00:00Z"},
+                    },
+                },
+                {
+                    "sha": f"mock_commit_{pr_num}_2",
+                    "commit": {
+                        "message": f"Mock commit 2 for PR #{pr_num}",
+                        "author": {"name": "mock_author", "date": "2026-05-20T13:00:00Z"},
+                    },
+                },
+            ]
+            return MockResponse(mock_commits)
+
+        # 10. PR files
+        files_match = re.match(
+            r"^/repos/([^/]+)/([^/]+)/pulls/(\d+)/files$", path
+        )
+        if files_match:
+            pr_num = int(files_match.group(3))
+            mock_files = [
+                {
+                    "filename": f"src/module_{pr_num}.py",
+                    "status": "modified",
+                    "additions": 42,
+                    "deletions": 7,
+                    "changes": 49,
+                    "patch": "@@ mock diff @@",
+                },
+                {
+                    "filename": "README.md",
+                    "status": "modified",
+                    "additions": 3,
+                    "deletions": 1,
+                    "changes": 4,
+                },
+            ]
+            return MockResponse(mock_files)
+
+        # 11. Other PR sub-resources fallback
         if "/pulls/" in path:
             return MockResponse([])
 

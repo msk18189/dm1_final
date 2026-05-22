@@ -150,6 +150,9 @@ def run_validation():
     assert repo.total_forks == fork_count, "Repository total_forks does not match DB count"
     assert repo.total_workflow_runs == runs_count, "Repository total_workflow_runs does not match DB count"
     assert repo.total_discussions == disc_count, "Repository total_discussions does not match DB count"
+    proj_repo_count = getattr(repo, "total_projects", 0) or 0
+    print(f"  * repo.total_projects: {proj_repo_count} vs DB count: {proj_count}")
+    assert proj_repo_count == proj_count, "Repository total_projects does not match DB count"
     
     # 5. Check database joins and references (preventing wrong repo_id mappings)
     print("\n[Step 7] Checking database joins and foreign key mappings...")

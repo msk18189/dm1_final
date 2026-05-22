@@ -31,10 +31,13 @@ def sync_issues(
     Correctly filters pull requests from the /issues endpoint.
     Returns total records synced (new + updated).
     """
+    from datetime import timedelta
     since_iso = None
+    since_cutoff = None
     if since:
         since_ts = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
         since_iso = since_ts.isoformat().replace("+00:00", "Z")
+        since_cutoff = since_ts - timedelta(days=1)
         print(f"[Telemetry][Issues] Ingestion Mode: Incremental. Filtering since: {since_iso}")
     else:
         print(f"[Telemetry][Issues] Ingestion Mode: Full sync mode for {owner}/{repo_name}")
@@ -49,33 +52,53 @@ def sync_issues(
     page_num = 0
     fetched_numbers = set()
 
-    # get_issues returns issues filtered of pull_requests
+    stop_incremental = False
     for page_items in rest_client.get_issues(owner, repo_name, since=since_iso):
         page_num += 1
         api_response_count += 1
-        records_fetched += len(page_items)
         print(f"[Telemetry][Issues] Pagination Progress: Fetching page {page_num}. Received {len(page_items)} issue records.")
 
-        for item in page_items:
+        for issue in page_items:
+            # Exclude pull requests correctly
+            if "pull_request" in issue:
+                continue
+
+            records_fetched += 1
+
+            updated_at = _parse_dt(issue.get("updated_at"))
+            if updated_at and updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+
+            # Fix incremental sync cutoff logic
+            if since_cutoff and updated_at and updated_at < since_cutoff:
+                existing = db.query(Issue).filter(
+                    Issue.repo_id == repo.id,
+                    Issue.issue_number == issue.get("number")
+                ).first()
+                if existing:
+                    print(f"[Telemetry][Issues] Incremental cutoff reached at issue #{issue.get('number')}. Breaking.")
+                    stop_incremental = True
+                    break
+
             try:
-                if item.get("number"):
-                    fetched_numbers.add(item.get("number"))
-                status = _upsert_issue(db, repo, owner, repo_name, item)
+                if issue.get("number"):
+                    fetched_numbers.add(issue.get("number"))
+                status = _upsert_issue(db, repo, owner, repo_name, issue)
                 if status == "inserted":
                     records_inserted += 1
                     total_synced += 1
                     batch_buffer.append(total_synced)
-                    print(f"[Telemetry][Issues] Incremental Decision: Inserting brand new Issue #{item.get('number')}.")
+                    print(f"[Telemetry][Issues] Incremental Decision: Inserting brand new Issue #{issue.get('number')}.")
                 elif status == "updated":
                     records_updated += 1
                     total_synced += 1
                     batch_buffer.append(total_synced)
-                    print(f"[Telemetry][Issues] Incremental Decision: Updating Issue #{item.get('number')}.")
+                    print(f"[Telemetry][Issues] Incremental Decision: Updating Issue #{issue.get('number')}.")
                 elif status == "skipped":
                     records_skipped += 1
-                    # print(f"[Telemetry][Issues] Incremental Decision: Skipping unchanged Issue #{item.get('number')}.")
+                    # print(f"[Telemetry][Issues] Incremental Decision: Skipping unchanged Issue #{issue.get('number')}.")
             except Exception as e:
-                print(f"[Issues] Upsert error for issue #{item.get('number', '?')}: {e}")
+                print(f"[Issues] Upsert error for issue #{issue.get('number', '?')}: {e}")
                 continue
 
             # Progress
@@ -91,6 +114,9 @@ def sync_issues(
             if len(batch_buffer) >= batch_size:
                 db.commit()
                 batch_buffer.clear()
+
+        if stop_incremental:
+            break
 
     if batch_buffer:
         db.commit()
@@ -120,6 +146,12 @@ def sync_issues(
         )
 
     print(f"[Telemetry][Issues] Sync complete. Stats: fetched={records_fetched}, inserted={records_inserted}, updated={records_updated}, skipped={records_skipped}, api_responses={api_response_count}")
+    print(f"[Telemetry][Issues] Sync complete.")
+    print(f"pages fetched: {page_num}")
+    print(f"issues fetched: {records_fetched}")
+    print(f"inserted: {records_inserted}")
+    print(f"updated: {records_updated}")
+    print(f"skipped: {records_skipped}")
     print(f"[Issues] Sync complete. Synced: {total_synced}, Total in DB: {repo.total_issues}")
     return total_synced
 

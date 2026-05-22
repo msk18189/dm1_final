@@ -140,16 +140,20 @@ def sync_pull_requests(
                     repo_name,
                     parsed["number"],
                 )
-
                 _upsert_commits(
                     db,
                     pr_obj.id,
                     repo.id,
                     commit_nodes,
                 )
-
+                db.flush()
+                commits_after = db.query(PRCommit).filter(PRCommit.pr_id == pr_obj.id).count()
+                print(
+                    f"[Telemetry][Commits] PR #{parsed['number']}: "
+                    f"fetched={len(commit_nodes)}, db_records={commits_after}"
+                )
             except Exception as e:
-                print(f"[Commits] Failed for PR #{parsed['number']}: {e}")
+                print(f"[Telemetry][Commits] Failed for PR #{parsed['number']}: {e}")
 
             # Files
             try:
@@ -158,16 +162,20 @@ def sync_pull_requests(
                     repo_name,
                     parsed["number"],
                 )
-
                 _upsert_files(
                     db,
                     pr_obj.id,
                     repo.id,
                     file_nodes,
                 )
-
+                db.flush()
+                files_after = db.query(PRFile).filter(PRFile.pr_id == pr_obj.id).count()
+                print(
+                    f"[Telemetry][Files] PR #{parsed['number']}: "
+                    f"fetched={len(file_nodes)}, db_records={files_after}"
+                )
             except Exception as e:
-                print(f"[Files] Failed for PR #{parsed['number']}: {e}")
+                print(f"[Telemetry][Files] Failed for PR #{parsed['number']}: {e}")
 
             total_synced += 1
 
@@ -289,7 +297,8 @@ def _upsert_commits(db, pr_id, repo_id, commit_nodes):
             continue
 
         existing = db.query(PRCommit).filter(
-            PRCommit.sha == sha
+            PRCommit.pr_id == pr_id,
+            PRCommit.sha == sha,
         ).first()
 
         if existing:
@@ -348,6 +357,5 @@ def _upsert_files(db, pr_id, repo_id, file_nodes):
                     additions=file.get("additions", 0),
                     deletions=file.get("deletions", 0),
                     changes=file.get("changes", 0),
-                    patch=file.get("patch"),
                 )
             )

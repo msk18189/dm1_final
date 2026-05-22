@@ -31,6 +31,40 @@ def _month_range(months: int) -> List[str]:
     return list(reversed(keys))
 
 
+def _month_range_from_filters(
+    months: int,
+    start_date_str: Optional[str] = None,
+    end_date_str: Optional[str] = None,
+) -> List[str]:
+    """Generate chronological list of YYYY-MM keys.
+
+    If start_date_str / end_date_str are provided (ISO date strings), the keys
+    span from the month of start_date to the month of end_date (inclusive).
+    Otherwise, falls back to the last *months* calendar months.
+    """
+    if start_date_str and end_date_str:
+        try:
+            start_dt = datetime.fromisoformat(
+                start_date_str if len(start_date_str) > 10 else start_date_str + "T00:00:00"
+            )
+            end_dt = datetime.fromisoformat(
+                end_date_str if len(end_date_str) > 10 else end_date_str + "T23:59:59"
+            )
+            keys: List[str] = []
+            y, m = start_dt.year, start_dt.month
+            end_ym = (end_dt.year, end_dt.month)
+            while (y, m) <= end_ym:
+                keys.append(f"{y:04d}-{m:02d}")
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+            return keys
+        except Exception:
+            pass  # fallback to default
+    return _month_range(months)
+
+
 def _format_month_label(ym: str) -> str:
     y, m = ym.split("-")
     return datetime(int(y), int(m), 1).strftime("%b %Y")
@@ -148,34 +182,74 @@ class AnalyticsService:
         ]
 
     def get_monthly_pr_flow(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
-        """Created / merged / closed counts by the month each event occurred."""
+        """Created / merged / closed counts by the month each event occurred.
+
+        Merged PRs are counted ONLY under 'merged', never under 'closed'.
+        Closed PRs are those whose state is CLOSED (merged_at is None).
+        """
         month_keys = _month_range(months)
+        first_month = month_keys[0]  # e.g. "2025-12"
+        last_month = month_keys[-1]  # e.g. "2026-05"
+
+        # Compute datetime bounds for the DB query
+        first_y, first_m = int(first_month[:4]), int(first_month[5:])
+        last_y, last_m = int(last_month[:4]), int(last_month[5:])
+        range_start = datetime(first_y, first_m, 1, tzinfo=timezone.utc)
+        # First day of the month after last_month
+        if last_m == 12:
+            range_end = datetime(last_y + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            range_end = datetime(last_y, last_m + 1, 1, tzinfo=timezone.utc)
+
+        from sqlalchemy import or_
+        prs = self.db.query(
+            PullRequest.created_at,
+            PullRequest.merged_at,
+            PullRequest.closed_at,
+            PullRequest.state,
+        ).filter(
+            PullRequest.repo_id == repo_id,
+            or_(
+                PullRequest.created_at.between(range_start, range_end),
+                PullRequest.merged_at.between(range_start, range_end),
+                PullRequest.closed_at.between(range_start, range_end),
+            )
+        ).all()
+
         flow = {
             ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0}
             for ym in month_keys
         }
 
-        prs = self.db.query(PullRequest).filter(
-            PullRequest.repo_id == repo_id,
-        ).all()
+        for created_at, merged_at, closed_at, state in prs:
+            if created_at:
+                m = _month_key(created_at)
+                if m in flow:
+                    flow[m]["created"] += 1
 
-        for pr in prs:
-            if pr.created_at:
-                created_month = _month_key(pr.created_at)
-                if created_month in flow:
-                    flow[created_month]["created"] += 1
+            if merged_at:
+                m = _month_key(merged_at)
+                if m in flow:
+                    flow[m]["merged"] += 1
+            elif state and state.upper() == "CLOSED" and closed_at:
+                # Only count as closed if NOT merged (merged_at is None)
+                m = _month_key(closed_at)
+                if m in flow:
+                    flow[m]["closed"] += 1
 
-            if pr.merged_at:
-                merged_month = _month_key(pr.merged_at)
-                if merged_month in flow:
-                    flow[merged_month]["merged"] += 1
+        result = [flow[ym] for ym in month_keys]
 
-            if pr.state == "CLOSED" and pr.closed_at:
-                closed_month = _month_key(pr.closed_at)
-                if closed_month in flow:
-                    flow[closed_month]["closed"] += 1
+        created_total = sum(r["created"] for r in result)
+        merged_total = sum(r["merged"] for r in result)
+        closed_total = sum(r["closed"] for r in result)
 
-        return [flow[ym] for ym in month_keys]
+        print(f"[Telemetry][MonthlyFlow] monthly grouped counts: {len(result)}")
+        print(f"[Telemetry][MonthlyFlow] created totals: {created_total}")
+        print(f"[Telemetry][MonthlyFlow] merged totals: {merged_total}")
+        print(f"[Telemetry][MonthlyFlow] closed totals: {closed_total}")
+        print(f"[Telemetry][MonthlyFlow] API payload: {result}")
+
+        return result
     
     def get_oldest_open_prs(self, repo_id: int, limit: int = 10) -> List[Dict]:
         prs = self.db.query(PullRequest).filter(

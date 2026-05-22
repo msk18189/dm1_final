@@ -299,7 +299,7 @@ class SyncEngine:
         from github.modules.projects import sync_projects
         return sync_projects(
             self.owner, self.repo_name, self.db, self.gql,
-            repo=self.repo, progress=self.progress,
+            repo=self.repo, rest_client=self.rest, progress=self.progress,
             batch_size=self.SYNC_BATCH_SIZE
         )
 

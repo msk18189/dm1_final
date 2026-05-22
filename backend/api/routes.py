@@ -86,9 +86,12 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
         user_token = (request.github_token or "").strip() or None
         token_source = "user" if user_token else ("env" if __import__("os").getenv("GITHUB_TOKEN") else "none")
 
-        from github.client import GitHubClient
+        from github.client import GitHubClient, GitHubRestClient
         client = GitHubClient(token=user_token)
         result = client.verify_repository_access(owner, repo_name)
+        features = client.fetch_repository_module_features(owner, repo_name)
+        rest = GitHubRestClient(token=user_token)
+        scope_info = rest.get_token_scopes()
         canonical_url = normalize_github_url(result["owner"], result["repo"])
 
         return {
@@ -102,6 +105,11 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
             "description": result.get("description"),
             "has_token": (user_token is not None or __import__("os").getenv("GITHUB_TOKEN") is not None),
             "token_source": token_source,
+            "discussions_enabled": features.get("discussions_enabled", False),
+            "discussions_total": features.get("discussions_total", 0),
+            "projects_total": features.get("projects_total", 0),
+            "token_scopes": scope_info.get("scopes", []),
+            "has_project_scope": scope_info.get("has_project_scope", False),
         }
     except Exception as e:
         error_msg = str(e)
@@ -138,6 +146,7 @@ def get_repositories(db: Session = Depends(get_db)):
                 "total_forks": r.total_forks,
                 "total_workflow_runs": r.total_workflow_runs,
                 "total_discussions": r.total_discussions,
+                "total_projects": getattr(r, "total_projects", 0) or 0,
             })
         return res
     except Exception as e:
@@ -225,6 +234,7 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "total_forks": repo.total_forks,
         "total_workflow_runs": repo.total_workflow_runs,
         "total_discussions": repo.total_discussions,
+        "total_projects": getattr(repo, "total_projects", 0) or 0,
         "rate_limit_remaining": repo.rate_limit_remaining,
         "rate_limit_limit": repo.rate_limit_limit,
         "rate_limit_reset": repo.rate_limit_reset.isoformat() if repo.rate_limit_reset else None,

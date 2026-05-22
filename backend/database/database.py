@@ -135,6 +135,7 @@ def _run_migrations(engine_obj):
                     "total_forks": "INTEGER DEFAULT 0",
                     "total_workflow_runs": "INTEGER DEFAULT 0",
                     "total_discussions": "INTEGER DEFAULT 0",
+                    "total_projects": "INTEGER DEFAULT 0",
                     "error_message": "TEXT",
                     "rate_limit_remaining": "INTEGER",
                     "rate_limit_limit": "INTEGER",
