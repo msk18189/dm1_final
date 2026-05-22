@@ -48,7 +48,9 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
             placeholder="github_pat_..."
             className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5 text-sm text-white/80 placeholder:text-white/20 focus:outline-none focus:border-indigo-500/50 font-mono"
           />
-          <p className="text-[10px] text-white/25 mt-1">Token requires: public_repo scope (for public repositories)</p>
+          <p className="text-[10px] text-white/25 mt-1">
+            Token scopes: public_repo or repo (private repos), read:project for Projects v2
+          </p>
         </div>
 
         <button onClick={handleSave}

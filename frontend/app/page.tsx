@@ -278,6 +278,7 @@ export default function Home() {
     total_forks: syncStatus.total_forks,
     total_workflow_runs: syncStatus.total_workflow_runs,
     total_discussions: syncStatus.total_discussions,
+    total_projects: syncStatus.total_projects,
   } : undefined
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -410,7 +411,7 @@ function OverviewSection({ kpi, monthlyFlow, throughput, syncStatus, repoLabel, 
     { label: 'Total PRs', value: kpi?.total_prs?.toLocaleString() ?? '—', icon: <FolderGit2 />, color: 'from-indigo-500 to-violet-600', onClick: () => onNavigate('pull_requests') },
     { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', icon: <GitMerge />, color: 'from-emerald-500 to-teal-600', onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', icon: <Clock />, color: 'from-amber-500 to-orange-600', onClick: () => onNavigate('pull_requests') },
-    { label: 'Open Issues', value: syncStatus?.total_issues?.toLocaleString() ?? '—', icon: <AlertCircle />, color: 'from-rose-500 to-pink-600', onClick: () => onNavigate('issues') },
+    { label: 'Total Issues', value: syncStatus?.total_issues?.toLocaleString() ?? '—', icon: <AlertCircle />, color: 'from-rose-500 to-pink-600', onClick: () => onNavigate('issues') },
     { label: 'Branches', value: syncStatus?.total_branches?.toLocaleString() ?? '—', icon: <Timer />, color: 'from-sky-500 to-cyan-600', onClick: () => onNavigate('branches') },
     { label: 'CI/CD Runs', value: syncStatus?.total_workflow_runs?.toLocaleString() ?? '—', icon: <Zap />, color: 'from-violet-500 to-purple-600', onClick: () => onNavigate('cicd') },
   ]

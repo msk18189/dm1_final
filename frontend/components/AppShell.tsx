@@ -52,6 +52,7 @@ interface AppShellProps {
     total_forks?: number
     total_workflow_runs?: number
     total_discussions?: number
+    total_projects?: number
   }
 }
 
@@ -90,7 +91,7 @@ export default function AppShell({
     },
     {
       id: 'projects', label: 'Projects', icon: <Kanban className="h-4 w-4" />,
-      requiresData: true,
+      requiresData: true, badge: syncCounts?.total_projects,
     },
     {
       id: 'discussions', label: 'Discussions', icon: <MessageCircle className="h-4 w-4" />,

@@ -59,6 +59,7 @@ export const getSyncStatus = async (repoId: number) => {
     error_message: string | null
     total_prs: number; total_issues: number; total_branches: number
     total_forks: number; total_workflow_runs: number; total_discussions: number
+    total_projects: number
     rate_limit_remaining: number | null; rate_limit_limit: number | null; rate_limit_reset: string | null
   }
 }
@@ -69,6 +70,7 @@ export interface AnalyzedRepo {
   sync_status?: string; initial_sync_completed?: boolean; last_synced_at?: string
   total_prs?: number; total_issues?: number; total_branches?: number
   total_forks?: number; total_workflow_runs?: number; total_discussions?: number
+  total_projects?: number
 }
 
 export async function getRepositories(): Promise<AnalyzedRepo[]> {

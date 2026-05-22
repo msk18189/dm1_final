@@ -561,14 +561,43 @@ def export_report_pdf(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/system-status")
-def get_system_status(db: Session = Depends(get_db)):
+def get_system_status(
+    validate_endpoints: bool = Query(default=False),
+    repo_id: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db)
+):
     try:
+        from services.validation import SystemIntegrityValidator, test_rest_endpoints
+        
         repo_count = db.query(Repository).count()
         pr_count = db.query(PullRequest).count()
         contributor_count = db.query(Contributor).count()
 
+        validator = SystemIntegrityValidator(db)
+        validation_report = validator.validate_all(repo_id=repo_id)
+
+        endpoints_report = None
+        if validate_endpoints:
+            target_repo_id = repo_id
+            if not target_repo_id:
+                first_repo = db.query(Repository).first()
+                if first_repo:
+                    target_repo_id = first_repo.id
+            
+            if target_repo_id:
+                endpoints_report = test_rest_endpoints(target_repo_id)
+            else:
+                endpoints_report = {
+                    "all_endpoints_ok": False,
+                    "error": "No repositories available in the database to test endpoints against."
+                }
+
+        status_flag = "healthy"
+        if validation_report.get("status") == "warnings" or (endpoints_report and not endpoints_report.get("all_endpoints_ok")):
+            status_flag = "warnings"
+
         return {
-            "status": "healthy",
+            "status": status_flag,
             "platform": "PRISM — GitHub Engineering Intelligence",
             "version": "2.0.0",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -582,6 +611,8 @@ def get_system_status(db: Session = Depends(get_db)):
                 "pull_requests", "issues", "branches", "repository_metadata",
                 "forks", "discussions", "projects", "cicd", "visibility"
             ],
+            "validation": validation_report,
+            "endpoints_check": endpoints_report
         }
     except Exception as e:
         return {"status": "error", "error": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}

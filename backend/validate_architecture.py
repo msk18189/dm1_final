@@ -361,6 +361,47 @@ def run_validation():
     assert resp.status_code == 200, f"/api/cicd/analytics/{repo_id} failed: {resp.text}"
     print("Averages JSON serialization and endpoint calls VERIFIED!")
 
+    # 10. Verify Validation & System Integrity Endpoint API
+    print("\n[Step 14] Verifying system-status and validation endpoints...")
+    # Call without validate_endpoints
+    resp = client.get("/api/system-status", params={"repo_id": repo_id})
+    assert resp.status_code == 200, f"/api/system-status failed: {resp.text}"
+    status_data = resp.json()
+    assert status_data["status"] in ("healthy", "warnings"), f"Unexpected status: {status_data['status']}"
+    assert "validation" in status_data, "Validation section missing from system-status response"
+    
+    validation_report = status_data["validation"]
+    assert "orphans" in validation_report, "Orphans missing from validation report"
+    assert "duplicates" in validation_report, "Duplicates missing from validation report"
+    assert "empty_objects" in validation_report, "Empty objects missing from validation report"
+    assert "repo_mappings" in validation_report, "Repo mappings missing from validation report"
+    assert "count_consistency" in validation_report, "Count consistency missing from validation report"
+    assert "tri_counts_comparison" in validation_report, "Tri-counts comparison missing from validation report"
+
+    # Verify tri-count details
+    tri_counts = validation_report["tri_counts_comparison"]
+    assert tri_counts["repo_id"] == repo_id, f"Expected repo_id {repo_id}, got {tri_counts.get('repo_id')}"
+    assert "comparison" in tri_counts, "Comparison missing from tri-counts report"
+    comparison = tri_counts["comparison"]
+    for module in ["pull_requests", "issues", "branches", "forks", "workflow_runs", "discussions", "projects"]:
+        assert module in comparison, f"Module {module} missing from tri-count comparison"
+        module_comp = comparison[module]
+        assert "github_count" in module_comp
+        assert "db_count" in module_comp
+        assert "dashboard_count" in module_comp
+        assert "consistent" in module_comp
+        
+    # Call with validate_endpoints=true
+    resp_endpoints = client.get("/api/system-status", params={"validate_endpoints": "true", "repo_id": repo_id})
+    assert resp_endpoints.status_code == 200, f"/api/system-status with validate_endpoints failed: {resp_endpoints.text}"
+    endpoints_data = resp_endpoints.json()
+    assert "endpoints_check" in endpoints_data, "Endpoints check missing from system-status response"
+    endpoints_check = endpoints_data["endpoints_check"]
+    assert "all_endpoints_ok" in endpoints_check, "all_endpoints_ok field missing"
+    assert endpoints_check["all_endpoints_ok"] is True, f"Some REST endpoints failed: {endpoints_check.get('endpoints')}"
+    
+    print("System status and validation endpoints VERIFIED!")
+
     # Cleanup environment
     if "MOCK_GITHUB_PRUNED" in os.environ:
         del os.environ["MOCK_GITHUB_PRUNED"]
@@ -369,11 +410,12 @@ def run_validation():
     db.close()
 
     print("\n==============================================================")
-    print("       ALL 13 PRISM ARCHITECTURE VALIDATION TESTS PASSED!     ")
+    print("       ALL 14 PRISM ARCHITECTURE VALIDATION TESTS PASSED!     ")
     print("==============================================================")
     print("End-to-End database persistence, recursive pagination, duplicate")
     print("prevention, repository metadata summary counts, module joining,")
-    print("database pruning, and REST analytics APIs are working flawlessly together.")
+    print("database pruning, REST analytics APIs, and integrity/validation")
+    print("framework endpoints are working flawlessly together.")
 
 
 if __name__ == "__main__":

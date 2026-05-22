@@ -17,6 +17,7 @@ interface SyncStatus {
   total_forks: number
   total_workflow_runs: number
   total_discussions: number
+  total_projects: number
   rate_limit_remaining: number | null
   rate_limit_limit: number | null
 }
@@ -86,13 +87,14 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
           )}
 
           {/* Module record counts */}
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 border-t border-white/[0.04] pt-3">
+          <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 border-t border-white/[0.04] pt-3">
             <MetricCell label="PRs" value={syncStatus.total_prs ?? 0} />
             <MetricCell label="Issues" value={syncStatus.total_issues ?? 0} />
             <MetricCell label="Branches" value={syncStatus.total_branches ?? 0} />
             <MetricCell label="Forks" value={syncStatus.total_forks ?? 0} />
             <MetricCell label="CI Runs" value={syncStatus.total_workflow_runs ?? 0} />
             <MetricCell label="Discussions" value={syncStatus.total_discussions ?? 0} />
+            <MetricCell label="Projects" value={syncStatus.total_projects ?? 0} />
           </div>
 
           <div className="flex flex-wrap gap-4 mt-3 border-t border-white/[0.04] pt-3">

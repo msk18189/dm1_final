@@ -173,6 +173,19 @@ class SyncEngine:
             self.db.commit()
             print(f"[SyncEngine] Completed {self.owner}/{self.repo_name} in {SyncProgress._fmt_duration(duration)}")
 
+            # Ingestion validation checks & print telemetry logs
+            try:
+                from services.validation import SystemIntegrityValidator
+                validator = SystemIntegrityValidator(self.db)
+                report = validator.validate_all(repo_id=self.repo.id)
+                print(f"[Validation][{self.owner}/{self.repo_name}] Ingestion validation complete.")
+                if report.get("count_consistency"):
+                    print(f"[Validation][{self.owner}/{self.repo_name}] WARNING: Count inconsistencies detected: {report.get('count_consistency')}")
+                else:
+                    print(f"[Validation][{self.owner}/{self.repo_name}] SUCCESS: Count consistency verified.")
+            except Exception as val_err:
+                print(f"[Validation][{self.owner}/{self.repo_name}] Error running validation checks: {val_err}")
+
         except Exception as e:
             error_msg = str(e)
             print(f"[SyncEngine] Fatal error: {error_msg}")
