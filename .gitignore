@@ -1,37 +1,99 @@
-# Frontend dependencies
+# =========================
+# Frontend
+# =========================
 frontend/node_modules/
 frontend/.next/
+frontend/out/
+frontend/build/
+
 frontend/.env.local
 frontend/.env.development.local
 frontend/.env.test.local
 frontend/.env.production.local
 
-# Backend dependencies
+# =========================
+# Backend
+# =========================
 backend/__pycache__/
-backend/*.py[cod]
-backend/*$py.class
-backend/*.so
-backend/.Python
+backend/**/*.py[cod]
+backend/*.sqlite3
+
 backend/env/
 backend/venv/
-backend/.venv
+backend/.venv/
 
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# ML models
+backend/ml/models/
+*.h5
+*.pt
+*.pth
+*.joblib
+*.pkl
+
+# =========================
 # Environment variables
+# =========================
 .env
 .env.local
 backend/.env
 backend/.env.local
 
+# =========================
+# Database / runtime
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# MySQL dumps
+*.sql
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
 # IDE
+# =========================
 .vscode/
 .idea/
 *.swp
 *.swo
 
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-npm-debug.log*
+# =========================
+# Coverage / testing
+# =========================
+.coverage
+htmlcov/
+.pytest_cache/
+coverage/
+
+# =========================
+# Build artifacts
+# =========================
+dist/
+build/
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+*.tmp
