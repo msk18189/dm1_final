@@ -1529,7 +1529,6 @@ class GitHubRestClient:
             ]
             return MockResponse(mock_files)
 
-        # 11. Other PR sub-resources fallback
         if "/pulls/" in path:
             return MockResponse([])
 
