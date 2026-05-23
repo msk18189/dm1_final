@@ -66,12 +66,12 @@ def sync_workflows(
                     if status == "inserted":
                         records_inserted += 1
                         total_runs_synced += 1
-                        batch_buffer.append(run_obj.id)
+                        batch_buffer.append(1)
                         print(f"[Telemetry][CI/CD] Incremental Decision: Inserting brand new Workflow Run #{run_item.get('id')}.")
                     elif status == "updated":
                         records_updated += 1
                         total_runs_synced += 1
-                        batch_buffer.append(run_obj.id)
+                        batch_buffer.append(1)
                         print(f"[Telemetry][CI/CD] Incremental Decision: Updating Workflow Run #{run_item.get('id')}.")
                     elif status == "skipped":
                         records_skipped += 1
@@ -220,7 +220,6 @@ def _upsert_workflow_run(db, repo, run_item, workflow_id_map) -> Tuple[Optional[
             duration_seconds=duration_seconds,
         )
         db.add(run_obj)
-        db.flush()
         return run_obj, "inserted"
 
 

@@ -4,7 +4,6 @@ github/client.py
 Dual-mode GitHub client:
   - GitHubClient: GraphQL API (used for PR intelligence and discussions)
   - GitHubRestClient: REST API (used for issues, branches, forks, workflows, projects)
-
 Both clients support:
   - Optional token (works for public repos without token)
   - Rate limit handling with automatic wait/retry
@@ -42,7 +41,7 @@ class MockResponse:
 
 class GitHubClient:
     def __init__(self, token: str = None):
-        self.token = token or os.getenv("GITHUB_TOKEN")
+        self.token = token
         self.base_url = "https://api.github.com/graphql"
 
         self.headers = {"Content-Type": "application/json"}
@@ -778,7 +777,7 @@ class GitHubRestClient:
     BASE_URL = "https://api.github.com"
 
     def __init__(self, token: str = None):
-        self.token = token or os.getenv("GITHUB_TOKEN")
+        self.token = token
         self.session = requests.Session()
         self.session.headers.update({
             "Accept": "application/vnd.github+json",
@@ -917,6 +916,228 @@ class GitHubRestClient:
                 if url_part.startswith("<") and url_part.endswith(">"):
                     return url_part[1:-1]
         return None
+
+    @staticmethod
+    def _parse_last_page_from_link(link_header: str) -> Optional[int]:
+        """Parse the last page number from a GitHub Link header."""
+        if not link_header:
+            return None
+        for part in link_header.split(","):
+            part = part.strip()
+            if 'rel="last"' in part:
+                url_part = part.split(";")[0].strip()
+                if url_part.startswith("<") and url_part.endswith(">"):
+                    url = url_part[1:-1]
+                    from urllib.parse import urlparse, parse_qs
+                    parsed = urlparse(url)
+                    query = parse_qs(parsed.query)
+                    if "page" in query:
+                        try:
+                            return int(query["page"][0])
+                        except Exception:
+                            pass
+        return None
+
+    def get_pull_requests(self, owner: str, repo: str, state: str = "all") -> Generator[List[Dict], None, None]:
+        """Paginate through pull requests using REST API."""
+        url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls"
+        params = {"state": state, "per_page": 50, "sort": "updated", "direction": "desc"}
+        for page in self._paginate(url, params):
+            yield page
+
+    def parse_rest_pr_data(self, pr: Dict) -> Dict:
+        """Parse raw REST PR data into structured format matching GraphQL format."""
+        try:
+            created_at_str = pr.get("created_at")
+            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+
+            updated_at_str = pr.get("updated_at")
+            updated_at = None
+            if updated_at_str:
+                updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+
+            merged_at_str = pr.get("merged_at")
+            merged_at = None
+            if merged_at_str:
+                merged_at = datetime.fromisoformat(merged_at_str.replace("Z", "+00:00"))
+
+            closed_at_str = pr.get("closed_at")
+            closed_at = None
+            if closed_at_str:
+                closed_at = datetime.fromisoformat(closed_at_str.replace("Z", "+00:00"))
+
+            cycle_time_days = None
+            if merged_at:
+                cycle_time_days = (merged_at - created_at).total_seconds() / 86400
+
+            author = pr.get("user", {}).get("login", "unknown") if pr.get("user") else "unknown"
+
+            state = pr.get("state", "open").upper()
+            if merged_at:
+                state = "MERGED"
+
+            labels_list = pr.get("labels", [])
+            label_names = [l.get("name", "") for l in labels_list if l]
+
+            return {
+                "number": pr.get("number", 0),
+                "github_node_id": pr.get("node_id"),
+                "title": pr.get("title", ""),
+                "body": pr.get("body", ""),
+                "state": state,
+                "draft": pr.get("draft", False),
+                "merge_state": pr.get("mergeable"),
+                "labels": ",".join(label_names),
+                "base_branch": pr.get("base", {}).get("ref"),
+                "head_branch": pr.get("head", {}).get("ref"),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "merged_at": merged_at,
+                "closed_at": closed_at,
+                "commit_count": 0,
+                "files_changed": 0,
+                "lines_added": 0,
+                "lines_deleted": 0,
+                "review_count": 0,
+                "comment_count": pr.get("comments", 0),
+                "author": author,
+                "cycle_time_days": cycle_time_days,
+                "wait_for_review_hours": None,
+                "review_duration_hours": None,
+                "approval_count": 0,
+                "change_request_count": 0,
+                "reviewer_count": 0,
+                "reviews": [],
+            }
+        except Exception as e:
+            print(f"Error parsing REST PR data: {str(e)}")
+            raise
+
+    def get_repository_estimates(self, owner: str, repo: str) -> Dict[str, Any]:
+        """Fetch counts of PRs, issues, forks, contributors, workflows to estimate API usage."""
+        meta = self.get_repository_metadata(owner, repo)
+        if not meta:
+            raise Exception("Repository not found or is private (GitHub PAT required).")
+
+        forks_count = meta.get("forks_count", 0)
+        is_private = meta.get("private", False)
+        stars = meta.get("stargazers_count", 0)
+        description = meta.get("description")
+        language = meta.get("language")
+
+        # 2. PR count
+        pr_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/pulls"
+            resp = self._get(url, params={"state": "all", "per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    pr_count = last_page if last_page else len(resp.json())
+                else:
+                    pr_count = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching PR count: {e}")
+
+        # 3. Issues count
+        total_issues_and_prs = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/issues"
+            resp = self._get(url, params={"state": "all", "per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    total_issues_and_prs = last_page if last_page else len(resp.json())
+                else:
+                    total_issues_and_prs = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching issues count: {e}")
+
+        issues_count = max(0, total_issues_and_prs - pr_count)
+
+        # 4. Contributors count
+        contributors_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/contributors"
+            resp = self._get(url, params={"per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    contributors_count = last_page if last_page else len(resp.json())
+                else:
+                    contributors_count = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching contributors count: {e}")
+
+        # 5. Workflows count
+        workflows_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/actions/workflows"
+            resp = self._get(url, params={"per_page": 1})
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    workflows_count = data.get("total_count", 0)
+        except Exception as e:
+            print(f"[Estimate] Error fetching workflows count: {e}")
+
+        # 5b. Commits count
+        commits_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/commits"
+            resp = self._get(url, params={"per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    commits_count = last_page if last_page else len(resp.json())
+                else:
+                    commits_count = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching commits count: {e}")
+
+        # 6. Discussions count
+        discussions_count = 0
+        if self.token:
+            try:
+                gql_client = GitHubClient(token=self.token)
+                features = gql_client.fetch_repository_module_features(owner, repo)
+                discussions_count = features.get("discussions_total", 0)
+            except Exception as e:
+                print(f"[Estimate] Error fetching discussions count: {e}")
+
+        import math
+        # Formulas for estimated requests
+        est_prs_rest = math.ceil(pr_count / 100) + pr_count * 3
+        est_issues_rest = math.ceil(issues_count / 100)
+        est_forks_rest = math.ceil(forks_count / 100)
+        est_workflows_rest = math.ceil((pr_count * 2) / 100)
+        estimated_requests_rest = 5 + est_prs_rest + est_issues_rest + est_forks_rest + est_workflows_rest
+
+        est_prs_pat = math.ceil(pr_count / 50) + pr_count * 2
+        est_discussions_pat = math.ceil(discussions_count / 50)
+        estimated_requests_pat = 6 + est_prs_pat + est_issues_rest + est_forks_rest + est_workflows_rest + est_discussions_pat + 1
+
+        return {
+            "owner": owner,
+            "repo": repo,
+            "is_private": is_private,
+            "stars": stars,
+            "description": description,
+            "language": language,
+            "pr_count": pr_count,
+            "issues_count": issues_count,
+            "commits_count": commits_count,
+            "forks_count": forks_count,
+            "contributors_count": contributors_count,
+            "workflows_count": workflows_count,
+            "discussions_count": discussions_count,
+            "estimated_requests_rest": estimated_requests_rest,
+            "estimated_requests_pat": estimated_requests_pat,
+        }
 
     def get_all_pages(self, url: str, params: Dict = None) -> List[Dict]:
         """Convenience method: collect all pages into a single list."""
@@ -1528,6 +1749,67 @@ class GitHubRestClient:
                 },
             ]
             return MockResponse(mock_files)
+
+        if path.endswith("/pulls"):
+            mock_prs = [
+                {
+                    "number": 1,
+                    "node_id": "mock_node_1",
+                    "title": "Mock Pull Request #1",
+                    "body": "Body of mock PR 1",
+                    "state": "open",
+                    "draft": False,
+                    "labels": [{"name": "bug"}],
+                    "base": {"ref": "main"},
+                    "head": {"ref": "feature-1"},
+                    "created_at": "2026-05-20T12:00:00Z",
+                    "updated_at": "2026-05-20T12:00:00Z",
+                    "merged_at": None,
+                    "closed_at": None,
+                    "user": {"login": "coder1"},
+                    "comments": 2
+                },
+                {
+                    "number": 2,
+                    "node_id": "mock_node_2",
+                    "title": "Mock Pull Request #2",
+                    "body": "Body of mock PR 2",
+                    "state": "closed",
+                    "draft": False,
+                    "labels": [],
+                    "base": {"ref": "main"},
+                    "head": {"ref": "feature-2"},
+                    "created_at": "2026-05-18T12:00:00Z",
+                    "updated_at": "2026-05-19T12:00:00Z",
+                    "merged_at": "2026-05-19T12:00:00Z",
+                    "closed_at": "2026-05-19T12:00:00Z",
+                    "user": {"login": "coder2"},
+                    "comments": 1
+                }
+            ]
+            return MockResponse(mock_prs)
+
+        # Mock repository commits
+        repo_commits_match = re.match(
+            r"^/repos/([^/]+)/([^/]+)/commits$", path
+        )
+        if repo_commits_match:
+            headers = {}
+            if "per_page" in query_params:
+                headers = {"Link": '<https://api.github.com/repositories/123/commits?per_page=1&page=150>; rel="last"'}
+            mock_commits = [{"sha": "mock_sha_1", "commit": {"message": "Initial commit"}}]
+            return MockResponse(mock_commits, headers=headers)
+
+        # Mock repository contributors
+        contributors_match = re.match(
+            r"^/repos/([^/]+)/([^/]+)/contributors$", path
+        )
+        if contributors_match:
+            headers = {}
+            if "per_page" in query_params:
+                headers = {"Link": '<https://api.github.com/repositories/123/contributors?per_page=1&page=5>; rel="last"'}
+            mock_contributors = [{"login": "mock_contributor_1", "contributions": 10}]
+            return MockResponse(mock_contributors, headers=headers)
 
         if "/pulls/" in path:
             return MockResponse([])

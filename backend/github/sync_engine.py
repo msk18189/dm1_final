@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from database.database import SessionLocal
 from database.models import Repository
+from config import SYNC_BATCH_SIZE
 
 
 class SyncProgress:
@@ -35,10 +36,9 @@ class SyncProgress:
         self.started_at = time.time()
         self.current_module = ""
         self.modules_completed = []
-        self.total_modules = 8  # PRs, Issues, Branches, Forks, Workflows, Discussions, Projects, Metadata
+        self.total_modules = 8  
         self.module_counts: Dict[str, int] = {}
 
-        # Per-module progress (for ETA on paginating modules)
         self.module_processed = 0
         self.module_discovered = 0
 
@@ -107,14 +107,11 @@ class SyncProgress:
 class SyncEngine:
     """
     Orchestrates full repository ingestion across all modules.
-
     Usage:
         engine = SyncEngine(db, repo, gql_client, rest_client)
         engine.run()
-    """
-
-    SYNC_BATCH_SIZE = 500  # DB commit interval
-    RATE_LIMIT_BUFFER = 50  # REST: pause when remaining < this
+    """ 
+    RATE_LIMIT_BUFFER = 50  
 
     def __init__(self, db: Session, repo: Repository, gql_client, rest_client):
         self.db = db
@@ -124,6 +121,7 @@ class SyncEngine:
         self.owner = repo.owner
         self.repo_name = repo.name
         self.progress = SyncProgress(db, repo)
+        self.batch_size = None
 
     def run(self):
         """
@@ -134,6 +132,9 @@ class SyncEngine:
 
         try:
             self._mark_syncing("Starting full repository ingestion...")
+
+            # Calculate dynamic batch size once before sync starts
+            self.batch_size = self._calculate_dynamic_batch_size()
 
             # Module 4 — Repository metadata (always first)
             self._run_module("repository_metadata", self._sync_repository_metadata)
@@ -154,10 +155,18 @@ class SyncEngine:
             self._run_module("workflows", self._sync_workflows)
 
             # Module 6 — Discussions (GraphQL)
-            self._run_module("discussions", self._sync_discussions)
+            if self.gql.token:
+                self._run_module("discussions", self._sync_discussions)
+            else:
+                print("[SyncEngine] Discussions module skipped (requires PAT).")
+                self.progress.update("Discussions skipped (requires PAT)", module="discussions", persist=True)
 
             # Module 7 — Projects v2 (GraphQL)
-            self._run_module("projects", self._sync_projects)
+            if self.gql.token:
+                self._run_module("projects", self._sync_projects)
+            else:
+                print("[SyncEngine] Projects module skipped (requires PAT).")
+                self.progress.update("Projects skipped (requires PAT)", module="projects", persist=True)
 
             # Finalize
             duration = time.time() - sync_start
@@ -221,17 +230,52 @@ class SyncEngine:
             except Exception:
                 pass
 
-    # ------------------------------------------------------------------
-    # MODULE 4 — Repository Metadata
-    # ------------------------------------------------------------------
+    def _calculate_dynamic_batch_size(self) -> int:
+        """
+        Estimate repository size and calculate batch size once before sync starts.
+        Uses total PRs, issues, commits, contributors, workflows.
+        """
+        try:
+            print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name} to compute batch size...")
+            estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
+            pr_count = estimates.get("pr_count", 0)
+            issues_count = estimates.get("issues_count", 0)
+            commits_count = estimates.get("commits_count", 0)
+            contributors_count = estimates.get("contributors_count", 0)
+            workflows_count = estimates.get("workflows_count", 0)
+            print(f"[SyncEngine] Repository estimates: prs={pr_count}, issues={issues_count}, commits={commits_count}, contributors={contributors_count}, workflows={workflows_count}")
+        except Exception as e:
+            print(f"[SyncEngine] Failed to fetch repository estimates: {e}. Falling back to DB repository stats or defaults.")
+            pr_count = self.repo.total_prs or 0
+            issues_count = self.repo.total_issues or 0
+            commits_count = 0
+            contributors_count = 0
+            workflows_count = self.repo.total_workflow_runs or 0
+
+        representative_size = max(
+            pr_count,
+            int(issues_count * 0.5),
+            int(commits_count * 0.1),
+            contributors_count * 10,
+            workflows_count * 10
+        )
+        if representative_size < 100:
+            batch_size = 20
+        elif representative_size < 1000:
+            batch_size = 100
+        elif representative_size < 5000:
+            batch_size = 250
+        elif representative_size <10000:
+            batch_size = 500
+        else:
+            batch_size = min(1000, 500 + (representative_size - 10000) // 100)
+
+        print(f"[SyncEngine] Calculated dynamic batch size: {batch_size} (representative size: {representative_size})")
+        return batch_size
 
     def _sync_repository_metadata(self) -> int:
         from github.modules.repository_metadata import sync_repository_metadata
         return sync_repository_metadata(self.owner, self.repo_name, self.db, self.rest, self.gql, self.repo)
-
-    # ------------------------------------------------------------------
-    # MODULE 1 — Pull Requests (GraphQL paginated)
-    # ------------------------------------------------------------------
 
     def _sync_pull_requests(self) -> int:
         from github.modules.pull_requests import sync_pull_requests
@@ -239,12 +283,8 @@ class SyncEngine:
         return sync_pull_requests(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
             repo=self.repo, since=since, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
-
-    # ------------------------------------------------------------------
-    # MODULE 2 — Issues
-    # ------------------------------------------------------------------
 
     def _sync_issues(self) -> int:
         from github.modules.issues import sync_issues
@@ -252,19 +292,15 @@ class SyncEngine:
         return sync_issues(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
             repo=self.repo, since=since, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
-
-    # ------------------------------------------------------------------
-    # MODULE 3 — Branches
-    # ------------------------------------------------------------------
 
     def _sync_branches(self) -> int:
         from github.modules.branches import sync_branches
         return sync_branches(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
 
     # ------------------------------------------------------------------
@@ -276,7 +312,7 @@ class SyncEngine:
         return sync_forks(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
 
     # ------------------------------------------------------------------
@@ -289,7 +325,7 @@ class SyncEngine:
         return sync_workflows(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, since=since, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
 
     # ------------------------------------------------------------------
@@ -301,7 +337,7 @@ class SyncEngine:
         return sync_discussions(
             self.owner, self.repo_name, self.db, self.gql,
             repo=self.repo, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
 
     # ------------------------------------------------------------------
@@ -313,7 +349,7 @@ class SyncEngine:
         return sync_projects(
             self.owner, self.repo_name, self.db, self.gql,
             repo=self.repo, rest_client=self.rest, progress=self.progress,
-            batch_size=self.SYNC_BATCH_SIZE
+            batch_size=self.batch_size
         )
 
 

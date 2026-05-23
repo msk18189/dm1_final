@@ -24,6 +24,21 @@ export default function RepositoryInput({
   const [verifying, setVerifying] = useState(false)
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null)
   const [verifyOk, setVerifyOk] = useState(false)
+  interface Estimation {
+    pr_count: number
+    issues_count: number
+    forks_count: number
+    contributors_count: number
+    workflows_count: number
+    discussions_count: number
+    is_private: boolean
+    estimated_requests: number
+    estimated_requests_rest: number
+    estimated_requests_pat: number
+    above_limit: boolean
+  }
+  const [estimation, setEstimation] = useState<Estimation | null>(null)
+  const [showRecommendation, setShowRecommendation] = useState(false)
 
   const tokenForRequest = () => {
     const t = githubToken.trim()
@@ -32,32 +47,77 @@ export default function RepositoryInput({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (url.trim()) await onAnalyze(url.trim(), tokenForRequest())
+    if (!url.trim()) return
+
+    let currentEst = estimation
+    let currentOk = verifyOk
+
+    if (!currentOk) {
+      setVerifying(true)
+      setVerifyMessage(null)
+      try {
+        const result = await verifyRepositoryAccess(url.trim(), tokenForRequest())
+        setVerifyOk(true)
+        currentOk = true
+        const privacy = result.is_private ? 'private' : 'public'
+        setVerifyMessage(`Access confirmed: ${result.owner}/${result.repo} (${privacy}).`)
+        if ('pr_count' in result) {
+          const est = result as any
+          setEstimation(est)
+          currentEst = est
+        }
+      } catch (err) {
+        setVerifyOk(false)
+        setVerifyMessage(formatApiError(err))
+        setVerifying(false)
+        return
+      } finally {
+        setVerifying(false)
+      }
+    }
+
+    if (currentEst) {
+      if (currentEst.is_private && !githubToken.trim()) {
+        setVerifyMessage('A GitHub Personal Access Token (PAT) is mandatory to synchronize private repositories.')
+        return
+      }
+
+      if (!currentEst.is_private && currentEst.above_limit && !githubToken.trim()) {
+        // Show recommendation dialog before sync
+        setShowRecommendation(true)
+        return
+      }
+    }
+
+    await onAnalyze(url.trim(), tokenForRequest())
   }
 
   const handleVerify = async () => {
     if (!url.trim()) {
       setVerifyMessage('Enter a repository URL first.')
       setVerifyOk(false)
+      setEstimation(null)
+      setShowRecommendation(false)
       return
     }
     setVerifying(true)
     setVerifyMessage(null)
     setVerifyOk(false)
+    setEstimation(null)
+    setShowRecommendation(false)
     try {
       const result = await verifyRepositoryAccess(url.trim(), tokenForRequest())
       const privacy = result.is_private ? 'private' : 'public'
-      const source =
-        result.token_source === 'user'
-          ? 'your token'
-          : result.token_source === 'env'
-            ? 'server .env'
-            : 'no token'
+      const source = result.token_source === 'user' ? 'your token' : 'no token'
       setVerifyOk(true)
       setVerifyMessage(`Access confirmed: ${result.owner}/${result.repo} (${privacy}) via ${source}.`)
+      if ('pr_count' in result) {
+        setEstimation(result as any)
+      }
     } catch (err) {
       setVerifyOk(false)
       setVerifyMessage(formatApiError(err))
+      setEstimation(null)
     } finally {
       setVerifying(false)
     }
@@ -121,6 +181,8 @@ export default function RepositoryInput({
                 setUrl(e.target.value)
                 setVerifyMessage(null)
                 setVerifyOk(false)
+                setEstimation(null)
+                setShowRecommendation(false)
               }}
               placeholder="github.com/owner/repo"
               className={`input-field ${isHero ? 'h-14 pr-5 !rounded-2xl text-lg' : 'pr-4 text-sm'}`}
@@ -143,6 +205,8 @@ export default function RepositoryInput({
               onGithubTokenChange(e.target.value)
               setVerifyMessage(null)
               setVerifyOk(false)
+              setEstimation(null)
+              setShowRecommendation(false)
             }}
             placeholder="ghp_…"
             className={`input-field font-mono ${isHero ? 'h-14 px-5 !rounded-2xl text-lg' : 'text-sm'}`}
@@ -159,6 +223,78 @@ export default function RepositoryInput({
           </p>
         )}
 
+        {estimation && (
+          <div className="rounded-2xl border border-warm-200 bg-white/50 p-5 space-y-4 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-secondary">
+              Expected API Requests & Repository Details
+            </h3>
+            
+            <div className="grid grid-cols-2 gap-4 text-xs sm:grid-cols-3">
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Pull Requests</span>
+                <span className="text-sm font-bold text-primary">{estimation.pr_count}</span>
+              </div>
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Issues</span>
+                <span className="text-sm font-bold text-primary">{estimation.issues_count}</span>
+              </div>
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Forks</span>
+                <span className="text-sm font-bold text-primary">{estimation.forks_count}</span>
+              </div>
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Contributors</span>
+                <span className="text-sm font-bold text-primary">{estimation.contributors_count}</span>
+              </div>
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Workflows</span>
+                <span className="text-sm font-bold text-primary">{estimation.workflows_count}</span>
+              </div>
+              <div className="rounded-xl bg-warm-50 p-3">
+                <span className="block text-muted">Discussions</span>
+                <span className="text-sm font-bold text-primary">{estimation.discussions_count}</span>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-warm-50 p-3 flex justify-between items-center text-xs">
+              <span className="text-muted">Estimated API Requests:</span>
+              <span className="text-sm font-bold text-palette-orange">
+                ~{estimation.estimated_requests} calls
+              </span>
+            </div>
+
+            {estimation.is_private && !githubToken.trim() && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-xs flex gap-2">
+                <Lock className="h-5 w-5 shrink-0 text-rose-500 mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-0.5">Private Repository Flow</span>
+                  🔒 This repository is private. A GitHub Personal Access Token (PAT) is mandatory to sync private repositories. Sync blocked until token is entered.
+                </div>
+              </div>
+            )}
+
+            {!estimation.is_private && estimation.above_limit && !githubToken.trim() && (
+              <div className="rounded-xl border border-palette-amber/20 bg-palette-amber-light/30 p-4 text-palette-amber text-xs flex gap-2">
+                <ShieldCheck className="h-5 w-5 shrink-0 text-palette-amber mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-0.5">Large repository detected</span>
+                  ⚠️ Large repository detected. Add GitHub PAT for deeper analysis and faster syncing. You may continue without a PAT with a limited/lightweight sync.
+                </div>
+              </div>
+            )}
+
+            {!estimation.is_private && !estimation.above_limit && (
+              <div className="rounded-xl border border-palette-emerald/20 bg-palette-emerald-light/20 p-4 text-palette-emerald text-xs flex gap-2">
+                <ShieldCheck className="h-5 w-5 shrink-0 text-palette-emerald mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-0.5">Lightweight Sync Ready</span>
+                  ✅ Estimated usage is below unauthenticated GitHub limit. You can safely synchronize without a token using anonymous API requests.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-4 pt-2 sm:flex-row">
           <button
             type="button"
@@ -171,7 +307,7 @@ export default function RepositoryInput({
           </button>
           <button
             type="submit"
-            disabled={isLoading || !url.trim()}
+            disabled={isLoading || !url.trim() || (estimation?.is_private && !githubToken.trim())}
             className={`btn-primary flex flex-1 items-center justify-center gap-2.5 transition-all duration-300 ${isHero ? 'text-lg h-14 !rounded-2xl font-bold shadow-lg hover:shadow-xl' : 'text-sm'}`}
           >
             {isLoading ? (
@@ -185,6 +321,91 @@ export default function RepositoryInput({
           </button>
         </div>
       </div>
+
+      {showRecommendation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg rounded-3xl border border-warm-200 bg-white p-8 shadow-2xl space-y-6"
+          >
+            <div className="space-y-2">
+              <h3 className="text-xl font-extrabold tracking-tight text-primary">
+                Large repository detected.
+              </h3>
+              <p className="text-sm text-secondary font-medium">
+                Add GitHub PAT for:
+              </p>
+            </div>
+
+            <ul className="space-y-2 text-sm text-secondary pl-2 font-medium">
+              <li className="flex items-center gap-2">
+                <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
+                <span>faster syncing</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
+                <span>deeper analytics</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
+                <span>higher API limits</span>
+              </li>
+            </ul>
+
+            <div className="space-y-3 pt-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-secondary">
+                Optional GitHub Personal Access Token (PAT)
+              </label>
+              <input
+                type="password"
+                placeholder="ghp_..."
+                className="input-field font-mono text-sm"
+                value={githubToken}
+                onChange={(e) => onGithubTokenChange(e.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-3 pt-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowRecommendation(false)
+                  await onAnalyze(url.trim(), undefined)
+                }}
+                className="btn-secondary text-sm flex-1 py-3 justify-center !rounded-xl"
+              >
+                Continue without PAT (lightweight sync)
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (githubToken.trim()) {
+                    setShowRecommendation(false)
+                    await onAnalyze(url.trim(), githubToken.trim())
+                  } else {
+                    setVerifyMessage('Please enter a GitHub PAT first or choose lightweight sync.')
+                  }
+                }}
+                disabled={!githubToken.trim()}
+                className="btn-primary text-sm flex-1 py-3 justify-center disabled:opacity-50 disabled:cursor-not-allowed !rounded-xl"
+              >
+                Add PAT for full analysis
+              </button>
+            </div>
+            
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setShowRecommendation(false)}
+                className="text-xs font-medium text-muted hover:text-primary transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.form>
   )
 }

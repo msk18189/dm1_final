@@ -20,7 +20,8 @@ from main import app
 from database.database import SessionLocal, init_db
 from database.models import (
     Repository, PullRequest, PRReview, Issue, Branch,
-    Fork, Workflow, WorkflowRun, Discussion, Project
+    Fork, Workflow, WorkflowRun, Discussion, Project,
+    Contributor, MLPrediction
 )
 from github.client import GitHubClient, GitHubRestClient
 from github.sync_engine import SyncEngine
@@ -46,6 +47,11 @@ def run_validation():
     existing_repo = db.query(Repository).filter(Repository.full_name == test_repo_full).first()
     if existing_repo:
         print(f"Found existing repository '{test_repo_full}' (ID: {existing_repo.id}). Deleting old records for clean E2E test...")
+        db.query(Contributor).filter(Contributor.repo_id == existing_repo.id).delete()
+        db.query(MLPrediction).filter(
+            MLPrediction.repo_owner == existing_repo.owner,
+            MLPrediction.repo_name == existing_repo.name
+        ).delete()
         db.delete(existing_repo)
         db.commit()
         print("Old mock records deleted successfully.")

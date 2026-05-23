@@ -120,45 +120,79 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 
 @router.post("/api/verify-repo")
 def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
-    """Verify repository accessibility and fetch basic metadata."""
+    """Verify repository accessibility and fetch basic metadata including API usage estimates."""
     try:
         url = request.url.strip()
         owner, repo_name = parse_github_repo_url(url)
-
         user_token = (request.github_token or "").strip() or None
-        token_source = "user" if user_token else ("env" if __import__("os").getenv("GITHUB_TOKEN") else "none")
+
+        # Determine token source
+        token_source = "user" if user_token else "none"
 
         from github.client import GitHubClient, GitHubRestClient
-        client = GitHubClient(token=user_token)
-        result = client.verify_repository_access(owner, repo_name)
-        features = client.fetch_repository_module_features(owner, repo_name)
         rest = GitHubRestClient(token=user_token)
-        scope_info = rest.get_token_scopes()
-        canonical_url = normalize_github_url(result["owner"], result["repo"])
+        
+        # Get estimates and basic metadata via REST
+        estimates = rest.get_repository_estimates(owner, repo_name)
+        
+        discussions_enabled = False
+        discussions_total = 0
+        projects_total = 0
+        scope_info = {"scopes": [], "has_project_scope": False}
+        
+        # If token is provided, run GraphQL feature probe and scopes
+        if user_token:
+            try:
+                gql_client = GitHubClient(token=user_token)
+                features = gql_client.fetch_repository_module_features(owner, repo_name)
+                discussions_enabled = features.get("discussions_enabled", False)
+                discussions_total = features.get("discussions_total", 0)
+                projects_total = features.get("projects_total", 0)
+                scope_info = rest.get_token_scopes()
+            except Exception as e:
+                print(f"[Verify] GraphQL probe failed: {e}")
+
+        canonical_url = normalize_github_url(estimates["owner"], estimates["repo"])
+
+        # Decide which estimate to report as 'estimated_requests'
+        chosen_estimate = estimates["estimated_requests_pat"] if user_token else estimates["estimated_requests_rest"]
+        above_limit = chosen_estimate > 60
 
         return {
             "ok": True,
-            "owner": result["owner"],
-            "repo": result["repo"],
-            "is_private": result["is_private"],
+            "owner": estimates["owner"],
+            "repo": estimates["repo"],
+            "is_private": estimates["is_private"],
             "url": canonical_url,
-            "stars": result.get("stars", 0),
-            "language": result.get("language"),
-            "description": result.get("description"),
-            "has_token": (user_token is not None or __import__("os").getenv("GITHUB_TOKEN") is not None),
+            "stars": estimates["stars"],
+            "language": estimates["language"],
+            "description": estimates["description"],
+            "has_token": (user_token is not None),
             "token_source": token_source,
-            "discussions_enabled": features.get("discussions_enabled", False),
-            "discussions_total": features.get("discussions_total", 0),
-            "projects_total": features.get("projects_total", 0),
+            "discussions_enabled": discussions_enabled,
+            "discussions_total": discussions_total or estimates["discussions_count"],
+            "projects_total": projects_total,
             "token_scopes": scope_info.get("scopes", []),
             "has_project_scope": scope_info.get("has_project_scope", False),
+            
+            # Estimates
+            "pr_count": estimates["pr_count"],
+            "issues_count": estimates["issues_count"],
+            "forks_count": estimates["forks_count"],
+            "contributors_count": estimates["contributors_count"],
+            "workflows_count": estimates["workflows_count"],
+            "discussions_count": estimates["discussions_count"],
+            "estimated_requests": chosen_estimate,
+            "estimated_requests_rest": estimates["estimated_requests_rest"],
+            "estimated_requests_pat": estimates["estimated_requests_pat"],
+            "above_limit": above_limit
         }
     except Exception as e:
         error_msg = str(e)
-        if "Bad credentials" in error_msg:
+        if "Bad credentials" in error_msg or "401" in error_msg:
             raise HTTPException(status_code=400, detail="GitHub token is invalid or expired.")
-        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg:
-            raise HTTPException(status_code=400, detail="Repository not found.")
+        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg or "404" in error_msg or "private" in error_msg.lower():
+            raise HTTPException(status_code=400, detail="Repository not found or is private (GitHub PAT required).")
         raise HTTPException(status_code=400, detail=error_msg)
 
 

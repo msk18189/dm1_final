@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone,timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database.models import PullRequest, Repository, Contributor, MLPrediction, TotalAnalysis
