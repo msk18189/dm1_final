@@ -120,7 +120,7 @@ def sync_branches(
                     f"Syncing {owner}/{repo_name} Branches",
                     module="branches",
                     processed=total_synced,
-                    discovered=total_synced + 10,
+                    discovered=max(total_synced, repo.total_branches or 0),
                 )
 
             if len(batch_buffer) >= batch_size:

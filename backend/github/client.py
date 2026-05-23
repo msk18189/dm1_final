@@ -305,6 +305,7 @@ class GitHubClient:
                         answer { id }
                         comments { totalCount }
                         reactions { totalCount }
+                        participants(first: 1) { totalCount }
                         createdAt
                         updatedAt
                     }
@@ -698,6 +699,7 @@ class GitHubClient:
                     "answer": {"id": "ans_1"} if num % 2 == 0 else None,
                     "comments": {"totalCount": num * 2},
                     "reactions": {"totalCount": num},
+                    "participants": {"totalCount": num + 1},
                     "createdAt": "2026-01-01T00:00:00Z",
                     "updatedAt": "2026-01-02T00:00:00Z"
                 })
@@ -1099,6 +1101,36 @@ class GitHubRestClient:
         except Exception as e:
             print(f"[Estimate] Error fetching commits count: {e}")
 
+        # 5c. Branches count
+        branches_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/branches"
+            resp = self._get(url, params={"per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    branches_count = last_page if last_page else len(resp.json())
+                else:
+                    branches_count = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching branches count: {e}")
+
+        # 5d. Workflow runs count
+        workflow_runs_count = 0
+        try:
+            url = f"{self.BASE_URL}/repos/{owner}/{repo}/actions/runs"
+            resp = self._get(url, params={"per_page": 1})
+            if resp.status_code == 200:
+                link = resp.headers.get("Link", "")
+                if link:
+                    last_page = self._parse_last_page_from_link(link)
+                    workflow_runs_count = last_page if last_page else len(resp.json())
+                else:
+                    workflow_runs_count = len(resp.json())
+        except Exception as e:
+            print(f"[Estimate] Error fetching workflow runs count: {e}")
+
         # 6. Discussions count
         discussions_count = 0
         if self.token:
@@ -1119,8 +1151,7 @@ class GitHubRestClient:
 
         est_prs_pat = math.ceil(pr_count / 50) + pr_count * 2
         est_discussions_pat = math.ceil(discussions_count / 50)
-        estimated_requests_pat = 6 + est_prs_pat + est_issues_rest + est_forks_rest + est_workflows_rest + est_discussions_pat + 1
-
+        estimated_requests_pat = 6 + est_prs_pat + est_issues_rest + est_forks_rest + est_workflows_rest + est_discussions_pat
         return {
             "owner": owner,
             "repo": repo,
@@ -1132,8 +1163,10 @@ class GitHubRestClient:
             "issues_count": issues_count,
             "commits_count": commits_count,
             "forks_count": forks_count,
+            "branches_count": branches_count,
             "contributors_count": contributors_count,
             "workflows_count": workflows_count,
+            "workflow_runs_count": workflow_runs_count,
             "discussions_count": discussions_count,
             "estimated_requests_rest": estimated_requests_rest,
             "estimated_requests_pat": estimated_requests_pat,
@@ -1543,6 +1576,9 @@ class GitHubRestClient:
 
         # 3. Branches
         if path.endswith("/branches"):
+            headers = {}
+            if "per_page" in query_params:
+                headers = {"Link": '<https://api.github.com/repositories/123/branches?per_page=1&page=3>; rel="last"'}
             branches = [
                 {
                     "name": "main",
@@ -1580,7 +1616,7 @@ class GitHubRestClient:
             ]
             if os.getenv("MOCK_GITHUB_PRUNED") == "true":
                 branches = [b for b in branches if b["name"] != "stale-branch"]
-            return MockResponse(branches)
+            return MockResponse(branches, headers=headers)
 
         # 4. Forks
         if path.endswith("/forks"):
@@ -1637,6 +1673,9 @@ class GitHubRestClient:
 
         # 6. Workflow Runs
         if "/actions/runs" in path or "/actions/workflows/" in path:
+            headers = {}
+            if "per_page" in query_params:
+                headers = {"Link": '<https://api.github.com/repositories/123/actions/runs?per_page=1&page=2>; rel="last"'}
             is_incremental = "created" in query_params or os.getenv("MOCK_GITHUB_INCREMENTAL") == "true"
             runs = [
                 {
@@ -1677,7 +1716,7 @@ class GitHubRestClient:
                 "total_count": len(runs),
                 "workflow_runs": runs
             }
-            return MockResponse(data)
+            return MockResponse(data, headers=headers)
 
         # 7. Workflow Jobs
         if path.endswith("/jobs") and "/actions/runs/" in path:

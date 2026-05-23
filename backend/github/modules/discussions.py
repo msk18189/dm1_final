@@ -96,7 +96,7 @@ def sync_discussions(
                     f"Syncing {owner}/{repo_name} Discussions",
                     module="discussions",
                     processed=total_synced,
-                    discovered=total_synced + 50,
+                    discovered=max(total_synced, repo.total_discussions or 0),
                 )
 
             if len(batch_buffer) >= batch_size:
@@ -136,7 +136,7 @@ def _upsert_discussion(db: Session, repo: Repository, owner: str, repo_name: str
     answer_chosen = item.get("answer") is not None
     comment_count = (item.get("comments") or {}).get("totalCount", 0)
     reaction_count = (item.get("reactions") or {}).get("totalCount", 0)
-    participant_count = 0  # GitHub GraphQL Discussion type has no participants field
+    participant_count = (item.get("participants") or {}).get("totalCount", 0)
     created_at = _parse_dt(item.get("createdAt"))
     updated_at = _parse_dt(item.get("updatedAt"))
 

@@ -120,7 +120,7 @@ def sync_forks(
                     f"Syncing {owner}/{repo_name} Forks",
                     module="forks",
                     processed=total_synced,
-                    discovered=total_synced + 100,
+                    discovered=max(total_synced, repo.total_forks or 0),
                 )
 
             if len(batch_buffer) >= batch_size:

@@ -137,6 +137,14 @@ def _sync_projects_v2(owner, repo_name, db, gql_client, repo, progress, batch_si
                 print(f"[Projects v2] Upsert error: {e}")
                 continue
 
+            if progress and total_synced % 10 == 0:
+                progress.update(
+                    f"Syncing {owner}/{repo_name} Projects",
+                    module="projects",
+                    processed=total_synced,
+                    discovered=max(total_synced, repo.total_projects or 0),
+                )
+
             if len(batch_buffer) >= batch_size:
                 db.commit()
                 batch_buffer.clear()

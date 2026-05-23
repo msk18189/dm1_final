@@ -107,7 +107,7 @@ def sync_issues(
                     f"Syncing {owner}/{repo_name} Issues",
                     module="issues",
                     processed=total_synced,
-                    discovered=total_synced + 100,
+                    discovered=max(total_synced, repo.total_issues or 0),
                 )
 
             # Batch commit

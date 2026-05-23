@@ -692,12 +692,69 @@ class ExtendedAnalytics:
                     else None
                 )
             else:
-                score_source = "unavailable"
-                risk_score = 0.0
-                bottleneck_probability = 0.0
-                predicted_delay_days = None
-                predicted_delay_display = None
-                predicted_review_wait_hours = None
+                # Calculate age in days
+                now = ensure_utc(datetime.utcnow())
+                pr_created = ensure_utc(pr.created_at) if pr.created_at else now
+                age_days = (now - pr_created).days
+
+                score_source = "heuristic"
+                
+                # Heuristic Risk Score (0-100)
+                # Size component (max 40)
+                files_cnt = pr.files_changed or 0
+                lines_added = pr.lines_added or 0
+                lines_deleted = pr.lines_deleted or 0
+                total_lines = lines_added + lines_deleted
+                size_risk = min(40, (files_cnt * 2) + int(total_lines * 0.04))
+                
+                # Age component (max 30)
+                age_risk = min(30, age_days * 1.5)
+                
+                # Discussion/Review activity component (max 30)
+                comment_cnt = pr.comment_count or 0
+                rev_cnt = pr.review_count or 0
+                activity_risk = 0
+                if rev_cnt == 0:
+                    activity_risk += 20
+                elif comment_cnt > 10 and rev_cnt < 2:
+                    activity_risk += 15
+                activity_risk = min(30, activity_risk + min(10, comment_cnt * 1))
+                
+                risk_score = float(size_risk + age_risk + activity_risk)
+                
+                # Heuristic Bottleneck Probability (0-100)
+                base_bottleneck = 0
+                if rev_cnt == 0:
+                    if age_days > 14:
+                        base_bottleneck = 70.0
+                    elif age_days > 7:
+                        base_bottleneck = 50.0
+                    elif age_days > 3:
+                        base_bottleneck = 30.0
+                    else:
+                        base_bottleneck = 15.0
+                else:
+                    if age_days > 30:
+                        base_bottleneck = 60.0
+                    elif age_days > 14:
+                        base_bottleneck = 40.0
+                    elif age_days > 7:
+                        base_bottleneck = 20.0
+                    else:
+                        base_bottleneck = 5.0
+                        
+                size_factor = min(30.0, files_cnt * 1.5)
+                bottleneck_probability = round(min(100.0, base_bottleneck + size_factor), 1)
+                
+                # Heuristic Delay Days
+                predicted_delay_days = max(1.0, float(files_cnt * 0.2 + total_lines * 0.005 + age_days * 0.1))
+                predicted_delay_display = format_duration(predicted_delay_days * 24)
+                
+                # Heuristic Review Wait Hours
+                if rev_cnt == 0:
+                    predicted_review_wait_hours = float(max(24.0, age_days * 24.0))
+                else:
+                    predicted_review_wait_hours = 12.0
                 
             data.append({
                 "number": pr.pr_number,

@@ -409,9 +409,15 @@ def get_pr_risk(repo_id: int, page: int = 1, limit: int = 15, db: Session = Depe
 
 
 @router.get("/api/stale-alerts/{repo_id}")
-def get_stale_alerts(repo_id: int, page: int = 1, limit: int = 10, db: Session = Depends(get_db)):
+def get_stale_alerts(
+    repo_id: int,
+    page: int = 1,
+    limit: int = 10,
+    stale_days: int = Query(default=30, description="Stale threshold in days"),
+    db: Session = Depends(get_db)
+):
     ext = ExtendedAnalytics(db)
-    return ext.get_stale_recommendations(repo_id, page=page, limit=limit)
+    return ext.get_stale_recommendations(repo_id, page=page, limit=limit, stale_days=stale_days)
 
 
 # ---------------------------------------------------------------------------

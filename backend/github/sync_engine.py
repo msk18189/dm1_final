@@ -34,6 +34,7 @@ class SyncProgress:
         self.db = db
         self.repo = repo
         self.started_at = time.time()
+        self.module_started_at = time.time()
         self.current_module = ""
         self.modules_completed = []
         self.total_modules = 8  
@@ -46,6 +47,8 @@ class SyncProgress:
                discovered: int = None, persist: bool = True):
         """Update progress message and optionally persist to DB."""
         if module:
+            if self.current_module != module:
+                self.module_started_at = time.time()
             self.current_module = module
         if processed is not None:
             self.module_processed = processed
@@ -66,8 +69,11 @@ class SyncProgress:
 
     def _build_message(self, msg: str) -> str:
         """Build a rich progress string with ETA."""
-        elapsed = time.time() - self.started_at
+        module_elapsed = time.time() - getattr(self, "module_started_at", self.started_at)
         parts = [msg]
+
+        completed_count = len(self.modules_completed)
+        parts.insert(0, f"[{completed_count + 1}/{self.total_modules} Modules]")
 
         if self.module_discovered and self.module_processed:
             pct = min(100, int(self.module_processed / self.module_discovered * 100))
@@ -76,7 +82,7 @@ class SyncProgress:
 
             # ETA calculation
             if self.module_processed > 0:
-                rate = self.module_processed / max(elapsed, 1)
+                rate = self.module_processed / max(module_elapsed, 1)
                 remaining = (self.module_discovered - self.module_processed) / max(rate, 0.001)
                 parts.append(f"ETA: {self._fmt_duration(remaining)} remaining")
 
@@ -133,6 +139,25 @@ class SyncEngine:
         try:
             self._mark_syncing("Starting full repository ingestion...")
 
+            # Store initial estimates in repository database record for progress tracking and visibility
+            try:
+                print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name}...")
+                estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
+                self.estimates = estimates
+                
+                # Update Repository record counts with estimated totals immediately
+                self.repo.total_prs = estimates.get("pr_count", 0)
+                self.repo.total_issues = estimates.get("issues_count", 0)
+                self.repo.total_branches = estimates.get("branches_count", 0)
+                self.repo.total_forks = estimates.get("forks_count", 0)
+                self.repo.total_workflow_runs = estimates.get("workflow_runs_count", 0)
+                self.repo.total_discussions = estimates.get("discussions_count", 0)
+                self.db.commit()
+                print(f"[SyncEngine] Initial estimates stored: prs={self.repo.total_prs}, issues={self.repo.total_issues}, branches={self.repo.total_branches}, forks={self.repo.total_forks}, workflows={self.repo.total_workflow_runs}, discussions={self.repo.total_discussions}")
+            except Exception as e:
+                print(f"[SyncEngine] Failed to fetch or persist repository estimates: {e}")
+                self.estimates = {}
+
             # Calculate dynamic batch size once before sync starts
             self.batch_size = self._calculate_dynamic_batch_size()
 
@@ -160,6 +185,7 @@ class SyncEngine:
             else:
                 print("[SyncEngine] Discussions module skipped (requires PAT).")
                 self.progress.update("Discussions skipped (requires PAT)", module="discussions", persist=True)
+                self.progress.mark_module_done("discussions", 0)
 
             # Module 7 — Projects v2 (GraphQL)
             if self.gql.token:
@@ -167,6 +193,7 @@ class SyncEngine:
             else:
                 print("[SyncEngine] Projects module skipped (requires PAT).")
                 self.progress.update("Projects skipped (requires PAT)", module="projects", persist=True)
+                self.progress.mark_module_done("projects", 0)
 
             # Finalize
             duration = time.time() - sync_start
@@ -235,17 +262,22 @@ class SyncEngine:
         Estimate repository size and calculate batch size once before sync starts.
         Uses total PRs, issues, commits, contributors, workflows.
         """
-        try:
-            print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name} to compute batch size...")
-            estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
-            pr_count = estimates.get("pr_count", 0)
-            issues_count = estimates.get("issues_count", 0)
-            commits_count = estimates.get("commits_count", 0)
-            contributors_count = estimates.get("contributors_count", 0)
-            workflows_count = estimates.get("workflows_count", 0)
-            print(f"[SyncEngine] Repository estimates: prs={pr_count}, issues={issues_count}, commits={commits_count}, contributors={contributors_count}, workflows={workflows_count}")
-        except Exception as e:
-            print(f"[SyncEngine] Failed to fetch repository estimates: {e}. Falling back to DB repository stats or defaults.")
+        estimates = getattr(self, "estimates", {}) or {}
+        if not estimates:
+            try:
+                print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name} to compute batch size...")
+                estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
+                self.estimates = estimates
+            except Exception as e:
+                print(f"[SyncEngine] Failed to fetch repository estimates: {e}. Falling back to DB repository stats or defaults.")
+
+        pr_count = estimates.get("pr_count", 0)
+        issues_count = estimates.get("issues_count", 0)
+        commits_count = estimates.get("commits_count", 0)
+        contributors_count = estimates.get("contributors_count", 0)
+        workflows_count = estimates.get("workflows_count", 0)
+
+        if not estimates:
             pr_count = self.repo.total_prs or 0
             issues_count = self.repo.total_issues or 0
             commits_count = 0
@@ -263,10 +295,8 @@ class SyncEngine:
             batch_size = 20
         elif representative_size < 1000:
             batch_size = 100
-        elif representative_size < 5000:
+        elif representative_size < 10000:
             batch_size = 250
-        elif representative_size <10000:
-            batch_size = 500
         else:
             batch_size = min(1000, 500 + (representative_size - 10000) // 100)
 

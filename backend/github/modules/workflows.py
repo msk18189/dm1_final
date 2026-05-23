@@ -75,7 +75,6 @@ def sync_workflows(
                         print(f"[Telemetry][CI/CD] Incremental Decision: Updating Workflow Run #{run_item.get('id')}.")
                     elif status == "skipped":
                         records_skipped += 1
-                        # print(f"[Telemetry][CI/CD] Incremental Decision: Skipping unchanged Workflow Run #{run_item.get('id')}.")
 
             except Exception as e:
                 print(f"[CI/CD] Error upserting run {run_item.get('id', '?')}: {e}")
@@ -86,7 +85,7 @@ def sync_workflows(
                     f"Syncing {owner}/{repo_name} Workflow Runs",
                     module="workflows",
                     processed=total_runs_synced,
-                    discovered=total_runs_synced + 100,
+                    discovered=max(total_runs_synced, repo.total_workflow_runs or 0),
                 )
 
             if len(batch_buffer) >= batch_size:

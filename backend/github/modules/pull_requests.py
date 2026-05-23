@@ -102,6 +102,7 @@ def sync_pull_requests(
                         print(f"[PRs] Incremental cutoff reached")
                         break
 
+                is_skipped = False
                 existing = db.query(PullRequest).filter(
                     PullRequest.repo_id == repo.id,
                     PullRequest.pr_number == parsed["number"]
@@ -112,6 +113,7 @@ def sync_pull_requests(
                     if existing_updated and pr_updated_at and existing_updated.replace(tzinfo=timezone.utc) == pr_updated_at:
                         records_skipped += 1
                         pr_obj = existing
+                        is_skipped = True
                     else:
                         _update_pr(existing, owner, repo_name, parsed)
                         pr_obj = existing
@@ -125,54 +127,77 @@ def sync_pull_requests(
                     print(f"[Telemetry][PRs] Incremental Decision: Inserting brand new PR #{parsed['number']}.")
 
                 # Reviews
-                _upsert_reviews(
-                    db,
-                    pr_obj.id,
-                    repo.id,
-                    parsed.get("reviews", []),
-                )
+                has_reviews = False
+                if existing:
+                    has_reviews = db.query(PRReview).filter(PRReview.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_reviews):
+                    _upsert_reviews(
+                        db,
+                        pr_obj.id,
+                        repo.id,
+                        parsed.get("reviews", []),
+                    )
 
                 # Commits
-                try:
-                    commit_nodes = rest_client.fetch_pull_request_commits(
-                        owner,
-                        repo_name,
-                        parsed["number"],
-                    )
-                    _upsert_commits(
-                        db,
-                        pr_obj.id,
-                        repo.id,
-                        commit_nodes,
-                    )
-                    print(
-                        f"[Telemetry][Commits] PR #{parsed['number']}: "
-                        f"fetched={len(commit_nodes)}, db_records={len(commit_nodes)}"
-                    )
-                except Exception as e:
-                    print(f"[Telemetry][Commits] Failed for PR #{parsed['number']}: {e}")
+                has_commits = False
+                if existing:
+                    has_commits = db.query(PRCommit).filter(PRCommit.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_commits):
+                    try:
+                        commit_nodes = rest_client.fetch_pull_request_commits(
+                            owner,
+                            repo_name,
+                            parsed["number"],
+                        )
+                        _upsert_commits(
+                            db,
+                            pr_obj.id,
+                            repo.id,
+                            commit_nodes,
+                        )
+                        print(
+                            f"[Telemetry][Commits] PR #{parsed['number']}: "
+                            f"fetched={len(commit_nodes)}, db_records={len(commit_nodes)}"
+                        )
+                    except Exception as e:
+                        print(f"[Telemetry][Commits] Failed for PR #{parsed['number']}: {e}")
 
                 # Files
-                try:
-                    file_nodes = rest_client.fetch_pull_request_files(
-                        owner,
-                        repo_name,
-                        parsed["number"],
-                    )
-                    _upsert_files(
-                        db,
-                        pr_obj.id,
-                        repo.id,
-                        file_nodes,
-                    )
-                    print(
-                        f"[Telemetry][Files] PR #{parsed['number']}: "
-                        f"fetched={len(file_nodes)}, db_records={len(file_nodes)}"
-                    )
-                except Exception as e:
-                    print(f"[Telemetry][Files] Failed for PR #{parsed['number']}: {e}")
+                has_files = False
+                if existing:
+                    has_files = db.query(PRFile).filter(PRFile.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_files):
+                    try:
+                        file_nodes = rest_client.fetch_pull_request_files(
+                            owner,
+                            repo_name,
+                            parsed["number"],
+                        )
+                        _upsert_files(
+                            db,
+                            pr_obj.id,
+                            repo.id,
+                            file_nodes,
+                        )
+                        print(
+                            f"[Telemetry][Files] PR #{parsed['number']}: "
+                            f"fetched={len(file_nodes)}, db_records={len(file_nodes)}"
+                        )
+                    except Exception as e:
+                        print(f"[Telemetry][Files] Failed for PR #{parsed['number']}: {e}")
 
                 total_synced += 1
+
+                if progress and total_synced % 10 == 0:
+                    progress.update(
+                        f"Syncing {owner}/{repo_name} Pull Requests",
+                        module="pull_requests",
+                        processed=total_synced,
+                        discovered=max(total_synced, repo.total_prs or 0),
+                    )
 
                 if total_synced % batch_size == 0:
                     db.commit()
@@ -215,6 +240,7 @@ def sync_pull_requests(
                         print(f"[PRs] Incremental cutoff reached")
                         break
 
+                is_skipped = False
                 existing = db.query(PullRequest).filter(
                     PullRequest.repo_id == repo.id,
                     PullRequest.pr_number == parsed["number"]
@@ -225,6 +251,7 @@ def sync_pull_requests(
                     if existing_updated and pr_updated_at and existing_updated.replace(tzinfo=timezone.utc) == pr_updated_at:
                         records_skipped += 1
                         pr_obj = existing
+                        is_skipped = True
                     else:
                         _update_pr(existing, owner, repo_name, parsed)
                         pr_obj = existing
@@ -238,50 +265,73 @@ def sync_pull_requests(
                     print(f"[Telemetry][PRs] Incremental Decision: Inserting brand new PR #{parsed['number']}.")
 
                 # Reviews
-                try:
-                    review_nodes = rest_client.get_pr_reviews(owner, repo_name, parsed["number"])
-                    _upsert_reviews(db, pr_obj.id, repo.id, review_nodes)
-                    pr_obj.review_count = len(review_nodes)
-                except Exception as e:
-                    print(f"[Telemetry][Reviews] Failed for PR #{parsed['number']}: {e}")
+                has_reviews = False
+                if existing:
+                    has_reviews = db.query(PRReview).filter(PRReview.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_reviews):
+                    try:
+                        review_nodes = rest_client.get_pr_reviews(owner, repo_name, parsed["number"])
+                        _upsert_reviews(db, pr_obj.id, repo.id, review_nodes)
+                        pr_obj.review_count = len(review_nodes)
+                    except Exception as e:
+                        print(f"[Telemetry][Reviews] Failed for PR #{parsed['number']}: {e}")
 
                 # Commits
-                try:
-                    commit_nodes = rest_client.fetch_pull_request_commits(
-                        owner,
-                        repo_name,
-                        parsed["number"],
-                    )
-                    _upsert_commits(
-                        db,
-                        pr_obj.id,
-                        repo.id,
-                        commit_nodes,
-                    )
-                    pr_obj.commit_count = len(commit_nodes)
-                except Exception as e:
-                    print(f"[Telemetry][Commits] Failed for PR #{parsed['number']}: {e}")
+                has_commits = False
+                if existing:
+                    has_commits = db.query(PRCommit).filter(PRCommit.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_commits):
+                    try:
+                        commit_nodes = rest_client.fetch_pull_request_commits(
+                            owner,
+                            repo_name,
+                            parsed["number"],
+                        )
+                        _upsert_commits(
+                            db,
+                            pr_obj.id,
+                            repo.id,
+                            commit_nodes,
+                        )
+                        pr_obj.commit_count = len(commit_nodes)
+                    except Exception as e:
+                        print(f"[Telemetry][Commits] Failed for PR #{parsed['number']}: {e}")
 
                 # Files
-                try:
-                    file_nodes = rest_client.fetch_pull_request_files(
-                        owner,
-                        repo_name,
-                        parsed["number"],
-                    )
-                    _upsert_files(
-                        db,
-                        pr_obj.id,
-                        repo.id,
-                        file_nodes,
-                    )
-                    pr_obj.files_changed = len(file_nodes)
-                    pr_obj.lines_added = sum(f.get("additions", 0) for f in file_nodes if f)
-                    pr_obj.lines_deleted = sum(f.get("deletions", 0) for f in file_nodes if f)
-                except Exception as e:
-                    print(f"[Telemetry][Files] Failed for PR #{parsed['number']}: {e}")
+                has_files = False
+                if existing:
+                    has_files = db.query(PRFile).filter(PRFile.pr_id == pr_obj.id).first() is not None
+
+                if not (is_skipped and has_files):
+                    try:
+                        file_nodes = rest_client.fetch_pull_request_files(
+                            owner,
+                            repo_name,
+                            parsed["number"],
+                        )
+                        _upsert_files(
+                            db,
+                            pr_obj.id,
+                            repo.id,
+                            file_nodes,
+                        )
+                        pr_obj.files_changed = len(file_nodes)
+                        pr_obj.lines_added = sum(f.get("additions", 0) for f in file_nodes if f)
+                        pr_obj.lines_deleted = sum(f.get("deletions", 0) for f in file_nodes if f)
+                    except Exception as e:
+                        print(f"[Telemetry][Files] Failed for PR #{parsed['number']}: {e}")
 
                 total_synced += 1
+
+                if progress and total_synced % 10 == 0:
+                    progress.update(
+                        f"Syncing {owner}/{repo_name} Pull Requests",
+                        module="pull_requests",
+                        processed=total_synced,
+                        discovered=max(total_synced, repo.total_prs or 0),
+                    )
 
                 if total_synced % batch_size == 0:
                     db.commit()
