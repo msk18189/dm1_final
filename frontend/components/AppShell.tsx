@@ -162,7 +162,7 @@ export default function AppShell({
   const activeNavItem = NAV.find(n => n.id === activeSection)
 
   return (
-    <div className="flex min-h-screen bg-warm-50 p-3 sm:p-4">
+    <div className="flex h-screen overflow-hidden bg-warm-50 p-3 sm:p-4">
 
       {/* ── Sidebar ── */}
       <aside className="hidden w-[240px] shrink-0 flex-col rounded-shell bg-white border border-warm-200 p-4 text-secondary shadow-shell lg:flex">
@@ -237,7 +237,7 @@ export default function AppShell({
       </aside>
 
       {/* ── Main Panel ── */}
-      <div className="flex min-h-[calc(100vh-2rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-shell bg-warm-100 shadow-shell">
+      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-shell bg-warm-100 shadow-shell">
 
         {/* Header */}
         <header className="flex flex-wrap items-center gap-4 border-b border-warm-200/80 bg-white/60 px-5 py-3.5 backdrop-blur-sm sm:px-6">

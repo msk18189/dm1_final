@@ -85,7 +85,10 @@ export function signOut(): void {
   if (typeof window === 'undefined') return
   try {
     localStorage.removeItem(AUTH_TOKEN_KEY)
+    localStorage.removeItem('prism_repo_id')
+    localStorage.removeItem('prism_repo_label')
+    localStorage.removeItem('prism_active_section')
   } catch (err) {
-    console.error('Failed to clear token', err)
+    console.error('Failed to clear session', err)
   }
 }

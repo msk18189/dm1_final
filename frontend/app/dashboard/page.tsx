@@ -43,7 +43,7 @@ import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
 import { getAuthUser, signOut, isAuthenticated } from '@/lib/auth'
 import {
   AlertCircle, FolderGit2, Clock, Timer, Eye, MessageSquare,
-  GitMerge, AlertOctagon, RefreshCw, Zap,
+  GitMerge, AlertOctagon, RefreshCw, Zap, Loader2,
 } from 'lucide-react'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -89,13 +89,6 @@ export default function DashboardPage() {
   const [githubToken, setGithubToken] = useState<string>(() => loadGithubToken())
   const [userLabel, setUserLabel] = useState<string | undefined>()
 
-  // Direct page guard check
-  useEffect(() => {
-    if (!isAuthenticated()) {
-      router.replace('/login')
-    }
-  }, [router])
-
   // Repo state
   const [repoId, setRepoId] = useState<number | null>(null)
   const [repoLabel, setRepoLabel] = useState<string>('')
@@ -129,6 +122,7 @@ export default function DashboardPage() {
 
   // App state
   const [globalError, setGlobalError] = useState<string | null>(null)
+  const [isHydrated, setIsHydrated] = useState(false)
 
   // Load auth user
   useEffect(() => {
@@ -188,6 +182,94 @@ export default function DashboardPage() {
       setLoadingPR(false)
     }
   }, [])
+
+  // Hydration and state restoration on mount
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.replace('/login')
+      return
+    }
+
+    const savedRepoId = localStorage.getItem('prism_repo_id')
+    const savedRepoLabel = localStorage.getItem('prism_repo_label')
+    const savedActiveSection = localStorage.getItem('prism_active_section')
+
+    if (savedRepoId) {
+      const id = parseInt(savedRepoId, 10)
+      if (!isNaN(id)) {
+        setRepoId(id)
+        if (savedRepoLabel) setRepoLabel(savedRepoLabel)
+        if (savedActiveSection) setActiveSection(savedActiveSection as NavSection)
+
+        const restoreRepo = async () => {
+          try {
+            const status = await getSyncStatus(id)
+            setSyncStatus(status as SyncStatusData)
+            if (status.sync_status === 'SYNCING') {
+              setIsSyncing(true)
+              startPolling(id)
+            } else if (status.sync_status === 'COMPLETED') {
+              loadPRData(id, defaultFilters)
+            }
+          } catch (err) {
+            console.error("Failed to restore repo sync status", err)
+          } finally {
+            setIsHydrated(true)
+          }
+        }
+        restoreRepo()
+      } else {
+        router.replace('/analyze')
+        setIsHydrated(true)
+      }
+    } else {
+      router.replace('/analyze')
+      setIsHydrated(true)
+    }
+  }, [router, startPolling, loadPRData])
+
+  // Save state to localStorage when values change (only after hydration)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isHydrated) return
+    if (repoId !== null) {
+      localStorage.setItem('prism_repo_id', String(repoId))
+      localStorage.setItem('prism_dashboard_route', '/dashboard')
+    } else {
+      localStorage.removeItem('prism_repo_id')
+      localStorage.removeItem('prism_dashboard_route')
+    }
+  }, [repoId, isHydrated])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isHydrated) return
+    if (repoLabel) {
+      localStorage.setItem('prism_repo_label', repoLabel)
+    } else {
+      localStorage.removeItem('prism_repo_label')
+    }
+  }, [repoLabel, isHydrated])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isHydrated) return
+    if (activeSection) {
+      localStorage.setItem('prism_active_section', activeSection)
+    }
+  }, [activeSection, isHydrated])
+
+  // Handle "New Analysis" navigation to reset repo selection
+  useEffect(() => {
+    if (activeSection === 'analyze') {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('prism_repo_id')
+        localStorage.removeItem('prism_repo_label')
+        localStorage.removeItem('prism_active_section')
+        localStorage.removeItem('prism_dashboard_route')
+      }
+      setRepoId(null)
+      setRepoLabel('')
+      router.push('/analyze')
+    }
+  }, [activeSection, router])
 
   const loadTableData = useCallback(async (
     id: number, f: DashboardFiltersState,
@@ -291,6 +373,17 @@ export default function DashboardPage() {
   } : undefined
 
   // ─── Render ────────────────────────────────────────────────────────────────
+
+  if (!isHydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-warm-50">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-palette-orange" />
+          <p className="text-xs font-bold uppercase tracking-wider text-warm-400">Loading PRISM...</p>
+        </div>
+      </div>
+    )
+  }
 
   const hasData = !!(repoId && syncStatus?.initial_sync_completed)
 

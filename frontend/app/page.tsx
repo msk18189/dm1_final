@@ -10,7 +10,12 @@ export default function Home() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      router.replace('/dashboard')
+      const savedRepoId = localStorage.getItem('prism_repo_id')
+      if (savedRepoId) {
+        router.replace('/dashboard')
+      } else {
+        router.replace('/analyze')
+      }
     } else {
       router.replace('/login')
     }
