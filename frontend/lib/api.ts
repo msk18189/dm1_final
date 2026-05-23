@@ -1,11 +1,21 @@
 import axios, { isAxiosError } from 'axios'
 import type { DashboardFiltersState } from '@/components/DashboardFilters'
 
+import { getAuthToken } from './auth'
+
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
+})
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 function filterParams(filters?: DashboardFiltersState) {
@@ -21,15 +31,50 @@ function filterParams(filters?: DashboardFiltersState) {
 
 export function formatApiError(err: unknown): string {
   if (!isAxiosError(err)) {
-    return err instanceof Error ? err.message : 'Failed to analyze repository'
+    return err instanceof Error ? err.message : 'An unexpected error occurred'
   }
   if (err.code === 'ERR_NETWORK') {
-    return `Cannot reach the API at ${API_BASE}. Start the backend with: cd backend && python main.py`
+    return `Cannot reach the API at ${API_BASE}. Please ensure the backend is running.`
   }
-  const detail = err.response?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) return detail.map((d) => d.msg || d.message || String(d)).join(', ')
-  return err.message || 'Failed to analyze repository'
+  
+  const data = err.response?.data
+  if (data) {
+    // 1. Detail is a string
+    if (typeof data.detail === 'string') {
+      return data.detail
+    }
+    
+    // 2. Detail is an array of objects (e.g. Pydantic validation errors)
+    if (Array.isArray(data.detail)) {
+      return data.detail
+        .map((d: any) => {
+          if (typeof d === 'string') return d
+          if (d && typeof d === 'object') {
+            const loc = Array.isArray(d.loc) ? d.loc.filter((x: any) => x !== 'body').join('.') : ''
+            const prefix = loc ? `${loc}: ` : ''
+            const msg = d.msg || d.message || JSON.stringify(d)
+            return `${prefix}${msg}`
+          }
+          return String(d)
+        })
+        .join(' | ')
+    }
+    
+    // 3. Detail is a single object
+    if (data.detail && typeof data.detail === 'object') {
+      return data.detail.msg || data.detail.message || JSON.stringify(data.detail)
+    }
+
+    // 4. Message or error keys in response body
+    if (typeof data.message === 'string') {
+      return data.message
+    }
+    if (typeof data.error === 'string') {
+      return data.error
+    }
+  }
+  
+  return err.message || 'Failed to complete request'
 }
 
 // ─── Repository Management ────────────────────────────────────────────────
@@ -230,4 +275,16 @@ export function getExportCsvUrl(repoId: number, filters?: DashboardFiltersState)
 
 export function getExportPdfUrl(repoId: number, filters?: DashboardFiltersState): string {
   return `${API_BASE}/api/export-pdf/${repoId}${exportQueryString(filters)}`
+}
+
+// ─── Authentication API Calls ────────────────────────────────────────────────
+
+export const loginUser = async (payload: any) => {
+  const response = await api.post('/api/auth/login', payload)
+  return response.data as { access_token: string; username: string; email: string }
+}
+
+export const signupUser = async (payload: any) => {
+  const response = await api.post('/api/auth/signup', payload)
+  return response.data as { access_token: string; username: string; email: string }
 }

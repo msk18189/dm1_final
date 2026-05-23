@@ -1,32 +1,10 @@
-"""
-api/routes.py
 
-PRISM Enterprise GitHub Intelligence Platform — REST API Routes.
-
-All analytics routes read from MySQL (database-first architecture).
-GitHub API is only called during sync operations.
-
-Route groups:
-  /api/analyze              — trigger sync
-  /api/sync-status          — sync progress + ETA
-  /api/repositories         — repo list with module counts
-  /api/kpi                  — PR KPIs (module 1)
-  /api/issues               — issue analytics (module 2)
-  /api/branches             — branch analytics (module 3)
-  /api/forks                — fork analytics (module 5)
-  /api/cicd                 — CI/CD analytics (module 8)
-  /api/discussions          — discussion analytics (module 6)
-  /api/projects             — project analytics (module 7)
-  /api/repo-health          — aggregate health score (module 9)
-  /api/pr-*                 — detailed PR analytics (module 1)
-  /api/ml-*                 — ML model management
-  /api/export               — CSV/PDF export
-"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database.database import get_db, SessionLocal
-from database.models import Repository, PullRequest, Contributor
+from database.models import Repository, PullRequest, Contributor, User
+from api.auth import UserSignup, UserLogin, TokenResponse, hash_password, verify_password, create_access_token
 from ml.models import MLModels
 from services.data_processor import DataProcessor, parse_github_repo_url, normalize_github_url
 from services.extended_analytics import ExtendedAnalytics
@@ -70,6 +48,70 @@ def run_background_sync(repo_url: str, github_token: Optional[str]):
         run_sync_in_background(repo_url, github_token)
     except Exception as e:
         print(f"[Routes] Background sync error for {repo_url}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# AUTHENTICATION ROUTES
+# ---------------------------------------------------------------------------
+
+@router.post("/api/auth/signup", response_model=TokenResponse)
+def signup(payload: UserSignup, db: Session = Depends(get_db)):
+    """Register a new user, hash password, and return a JWT."""
+    if payload.confirm_password is not None and payload.password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
+        
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+    
+    # Check if user already exists
+    existing_user = db.query(User).filter(
+        (User.username == username) | (User.email == email)
+    ).first()
+    if existing_user:
+        if existing_user.username == username:
+            raise HTTPException(status_code=400, detail="Username already exists.")
+        else:
+            raise HTTPException(status_code=400, detail="Email already registered.")
+            
+    # Hash password and create user
+    hashed = hash_password(payload.password)
+    new_user = User(
+        username=username,
+        email=email,
+        password_hash=hashed
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # Generate token
+    token = create_access_token({"sub": new_user.username, "email": new_user.email})
+    return TokenResponse(
+        access_token=token,
+        username=new_user.username,
+        email=new_user.email
+    )
+
+
+@router.post("/api/auth/login", response_model=TokenResponse)
+def login(payload: UserLogin, db: Session = Depends(get_db)):
+    """Authenticate with username or email, verify password, and return a JWT."""
+    ident = payload.username_or_email.strip()
+    
+    # Query by username or email
+    user = db.query(User).filter(
+        (User.username == ident) | (User.email == ident.lower())
+    ).first()
+    
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username, email, or password.")
+        
+    token = create_access_token({"sub": user.username, "email": user.email})
+    return TokenResponse(
+        access_token=token,
+        username=user.username,
+        email=user.email
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -566,3 +566,18 @@ class AnalyticsSnapshot(Base):
     __table_args__ = (
         Index("ix_snapshot_repo_module_date", "repo_id", "module", "snapshot_date"),
     )
+
+
+# ---------------------------------------------------------------------------
+# SUPPORT — USER AUTHENTICATION
+# ---------------------------------------------------------------------------
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(255), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+

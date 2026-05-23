@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { isAuthenticated } from '@/lib/auth'
 import { Loader2 } from 'lucide-react'
 
-export default function Home() {
+export default function AnalyzePage() {
   const router = useRouter()
 
   useEffect(() => {

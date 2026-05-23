@@ -14,7 +14,10 @@ import {
   Plus,
   Bell,
   ChevronRight,
+  LogOut,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { signOut } from '@/lib/auth'
 
 export type NavSection =
   | 'analyze'
@@ -66,6 +69,12 @@ export default function AppShell({
   onNavigate,
   syncCounts,
 }: AppShellProps) {
+  const router = useRouter()
+
+  const handleSignOut = () => {
+    signOut()
+    router.replace('/login')
+  }
 
   const NAV: NavItem[] = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" />, requiresData: true },
@@ -120,7 +129,20 @@ export default function AppShell({
   /* Landing — no sidebar */
   if (!hasData) {
     return (
-      <div className="landing-center">
+      <div className="landing-center relative">
+        {userLabel && (
+          <div className="absolute top-6 right-6 flex items-center gap-2.5 z-20 bg-white border border-warm-200 px-3.5 py-2 rounded-xl shadow-sm">
+            <span className="text-xs font-semibold text-midnight-700">{userLabel}</span>
+            <span className="h-3.5 w-px bg-warm-200"></span>
+            <button
+              onClick={handleSignOut}
+              className="text-xs text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1.5 transition"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign Out
+            </button>
+          </div>
+        )}
         <div className="w-full max-w-5xl px-4 sm:px-6 lg:px-8">
           <div className="landing-hero-title mb-10 space-y-4">
             <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-3xl bg-palette-emerald-light shadow-sm">
@@ -230,8 +252,16 @@ export default function AppShell({
             )}
           </div>
           {userLabel && (
-            <div className="ml-2 hidden items-center rounded-xl border border-warm-200 bg-warm-50 px-3 py-1.5 text-xs text-midnight-500 sm:flex">
+            <div className="ml-2 hidden items-center gap-2 rounded-xl border border-warm-200 bg-warm-50 px-3 py-1.5 text-xs text-midnight-500 sm:flex">
               <span className="font-semibold text-midnight-700">{userLabel}</span>
+              <span className="h-3.5 w-px bg-warm-200"></span>
+              <button
+                onClick={handleSignOut}
+                className="font-semibold text-rose-600 hover:text-rose-700 transition flex items-center gap-1"
+              >
+                <LogOut className="h-3 w-3" />
+                Sign Out
+              </button>
             </div>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -242,6 +272,17 @@ export default function AppShell({
             >
               <Bell className="h-4 w-4" />
             </button>
+            {userLabel && (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                title="Sign Out"
+                className="rounded-xl p-2 text-rose-600 transition hover:bg-rose-50 hover:text-rose-700 sm:hidden"
+                aria-label="Sign Out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
             {headerActions}
           </div>
         </header>

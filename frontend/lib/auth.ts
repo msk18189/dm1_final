@@ -1,121 +1,91 @@
-const AUTH_USERS_KEY = 'github_pr_dashboard_users'
-const AUTH_CURRENT_USER_KEY = 'github_pr_dashboard_current_user'
+const AUTH_TOKEN_KEY = 'prism_auth_token'
 
-interface StoredUsers {
-  [username: string]: string
-}
-
-function isBrowser(): boolean {
-  return typeof window !== 'undefined'
-}
-
-function loadUsers(): StoredUsers {
-  if (!isBrowser()) return {}
+function decodeJwt(token: string): any {
   try {
-    const raw = window.localStorage.getItem(AUTH_USERS_KEY)
-    return raw ? (JSON.parse(raw) as StoredUsers) : {}
-  } catch {
-    return {}
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    const payload = parts[1]
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    )
+    return JSON.parse(jsonPayload)
+  } catch (e) {
+    return null
   }
 }
 
-function saveUsers(users: StoredUsers): void {
-  if (!isBrowser()) return
+export function saveAuthToken(token: string): void {
+  if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(users))
-  } catch {
-    // ignore storage failures
+    localStorage.setItem(AUTH_TOKEN_KEY, token)
+  } catch (err) {
+    console.error('Failed to save auth token', err)
   }
 }
 
-export function getAuthUser(): Promise<{ username: string } | null> {
-  if (!isBrowser()) return Promise.resolve(null)
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
   try {
-    const username = window.sessionStorage.getItem(AUTH_CURRENT_USER_KEY)
-    if (!username) {
+    return localStorage.getItem(AUTH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function getAuthUser(): Promise<{ username: string; email?: string } | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null)
+  try {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY)
+    if (!token) return Promise.resolve(null)
+    
+    const payload = decodeJwt(token)
+    if (!payload) return Promise.resolve(null)
+    
+    // Auto logout if expired
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      signOut()
       return Promise.resolve(null)
     }
-    return Promise.resolve({ username })
+    
+    return Promise.resolve({
+      username: payload.sub || '',
+      email: payload.email || '',
+    })
   } catch (err) {
-    console.error("Auth load failed", err)
+    console.error('Failed to get auth user', err)
     return Promise.resolve(null)
   }
 }
 
-export function hasStoredUsers(): boolean {
-  if (!isBrowser()) return false
-  try {
-    const users = loadUsers()
-    return Object.keys(users).length > 0
-  } catch {
-    return false
-  }
-}
-
 export function isAuthenticated(): boolean {
-  if (!isBrowser()) return false
+  if (typeof window === 'undefined') return false
   try {
-    return Boolean(window.sessionStorage.getItem(AUTH_CURRENT_USER_KEY))
+    const token = localStorage.getItem(AUTH_TOKEN_KEY)
+    if (!token) return false
+    
+    const payload = decodeJwt(token)
+    if (!payload) return false
+    
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      signOut()
+      return false
+    }
+    
+    return true
   } catch {
     return false
   }
 }
 
 export function signOut(): void {
-  if (!isBrowser()) return
+  if (typeof window === 'undefined') return
   try {
-    window.sessionStorage.removeItem(AUTH_CURRENT_USER_KEY)
-  } catch {
-    // ignore
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+  } catch (err) {
+    console.error('Failed to clear token', err)
   }
-}
-
-export function signUp(username: string, password: string): { success: boolean; error?: string } {
-  if (!isBrowser()) return { success: false, error: 'Client-side authentication unavailable.' }
-  const normalizedUsername = username.trim()
-  if (!normalizedUsername) {
-    return { success: false, error: 'Enter a username.' }
-  }
-  if (!password) {
-    return { success: false, error: 'Enter a password.' }
-  }
-
-  const users = loadUsers()
-  if (users[normalizedUsername]) {
-    return { success: false, error: 'Username already exists. Please sign in.' }
-  }
-
-  users[normalizedUsername] = password
-  saveUsers(users)
-  try {
-    window.sessionStorage.setItem(AUTH_CURRENT_USER_KEY, normalizedUsername)
-  } catch {
-    return { success: false, error: 'Unable to complete sign up.' }
-  }
-
-  return { success: true }
-}
-
-export function signIn(username: string, password: string): { success: boolean; error?: string } {
-  if (!isBrowser()) return { success: false, error: 'Client-side authentication unavailable.' }
-  const normalizedUsername = username.trim()
-  if (!normalizedUsername) {
-    return { success: false, error: 'Enter your username.' }
-  }
-  if (!password) {
-    return { success: false, error: 'Enter your password.' }
-  }
-
-  const users = loadUsers()
-  if (!users[normalizedUsername] || users[normalizedUsername] !== password) {
-    return { success: false, error: 'Invalid username or password.' }
-  }
-
-  try {
-    window.sessionStorage.setItem(AUTH_CURRENT_USER_KEY, normalizedUsername)
-  } catch {
-    return { success: false, error: 'Unable to complete sign in.' }
-  }
-
-  return { success: true }
 }
