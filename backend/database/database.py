@@ -128,6 +128,8 @@ def _run_migrations(engine_obj):
                     "sync_error": "TEXT",
                     "sync_duration": "FLOAT",
                     "initial_sync_completed": "TINYINT(1) DEFAULT 0",
+                    "sync_mode": "VARCHAR(50) DEFAULT 'full'",
+                    "sync_started_at": "DATETIME",
 
                     "last_synced_at": "DATETIME",
                     "last_successful_sync": "DATETIME",
@@ -143,6 +145,17 @@ def _run_migrations(engine_obj):
                     "total_workflow_runs": "INTEGER DEFAULT 0",
                     "total_discussions": "INTEGER DEFAULT 0",
                     "total_projects": "INTEGER DEFAULT 0",
+
+                    "expected_prs": "INTEGER DEFAULT 0",
+                    "expected_issues": "INTEGER DEFAULT 0",
+                    "expected_forks": "INTEGER DEFAULT 0",
+                    "expected_workflows": "INTEGER DEFAULT 0",
+
+                    "synced_prs": "INTEGER DEFAULT 0",
+                    "synced_issues": "INTEGER DEFAULT 0",
+                    "synced_forks": "INTEGER DEFAULT 0",
+                    "synced_workflows": "INTEGER DEFAULT 0",
+
 
                     "error_message": "TEXT",
 

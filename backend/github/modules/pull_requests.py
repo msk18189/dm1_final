@@ -35,12 +35,17 @@ def sync_pull_requests(
     since: Optional[datetime] = None,
     progress=None,
     batch_size: int = 500,
+    lightweight_mode: bool = False,
 ) -> int:
 
     cursor = None
     has_next = True
     total_synced = 0
     stop_incremental = False
+
+    # Initialize synced count from database count
+    repo.synced_prs = db.query(PullRequest).filter(PullRequest.repo_id == repo.id).count()
+    db.commit()
 
     records_fetched = 0
     records_inserted = 0
@@ -57,7 +62,7 @@ def sync_pull_requests(
     else:
         print(f"[PRs] Full sync mode for {owner}/{repo_name}")
 
-    use_graphql = gql_client.token is not None
+    use_graphql = gql_client.token is not None and not lightweight_mode
 
     if use_graphql:
         while has_next and not stop_incremental:
@@ -124,6 +129,7 @@ def sync_pull_requests(
                     db.add(pr_obj)
                     db.flush()
                     records_inserted += 1
+                    repo.synced_prs += 1
                     print(f"[Telemetry][PRs] Incremental Decision: Inserting brand new PR #{parsed['number']}.")
 
                 # Reviews
@@ -131,7 +137,7 @@ def sync_pull_requests(
                 if existing:
                     has_reviews = db.query(PRReview).filter(PRReview.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_reviews):
+                if not (is_skipped and has_reviews) and not lightweight_mode:
                     _upsert_reviews(
                         db,
                         pr_obj.id,
@@ -144,7 +150,7 @@ def sync_pull_requests(
                 if existing:
                     has_commits = db.query(PRCommit).filter(PRCommit.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_commits):
+                if not (is_skipped and has_commits) and not lightweight_mode:
                     try:
                         commit_nodes = rest_client.fetch_pull_request_commits(
                             owner,
@@ -169,7 +175,7 @@ def sync_pull_requests(
                 if existing:
                     has_files = db.query(PRFile).filter(PRFile.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_files):
+                if not (is_skipped and has_files) and not lightweight_mode:
                     try:
                         file_nodes = rest_client.fetch_pull_request_files(
                             owner,
@@ -262,6 +268,7 @@ def sync_pull_requests(
                     db.add(pr_obj)
                     db.flush()
                     records_inserted += 1
+                    repo.synced_prs += 1
                     print(f"[Telemetry][PRs] Incremental Decision: Inserting brand new PR #{parsed['number']}.")
 
                 # Reviews
@@ -269,7 +276,7 @@ def sync_pull_requests(
                 if existing:
                     has_reviews = db.query(PRReview).filter(PRReview.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_reviews):
+                if not (is_skipped and has_reviews) and not lightweight_mode:
                     try:
                         review_nodes = rest_client.get_pr_reviews(owner, repo_name, parsed["number"])
                         _upsert_reviews(db, pr_obj.id, repo.id, review_nodes)
@@ -282,7 +289,7 @@ def sync_pull_requests(
                 if existing:
                     has_commits = db.query(PRCommit).filter(PRCommit.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_commits):
+                if not (is_skipped and has_commits) and not lightweight_mode:
                     try:
                         commit_nodes = rest_client.fetch_pull_request_commits(
                             owner,
@@ -304,7 +311,7 @@ def sync_pull_requests(
                 if existing:
                     has_files = db.query(PRFile).filter(PRFile.pr_id == pr_obj.id).first() is not None
 
-                if not (is_skipped and has_files):
+                if not (is_skipped and has_files) and not lightweight_mode:
                     try:
                         file_nodes = rest_client.fetch_pull_request_files(
                             owner,
@@ -335,6 +342,10 @@ def sync_pull_requests(
 
                 if total_synced % batch_size == 0:
                     db.commit()
+
+            if lightweight_mode:
+                print(f"[PRs] Lightweight mode active: processed one page of PRs. Breaking pagination.")
+                break
 
         db.commit()
 
@@ -377,6 +388,9 @@ def _create_pr(repo_id: int, owner: str, repo_name: str, parsed: dict):
         lines_deleted=parsed.get("lines_deleted", 0),
         review_count=parsed.get("review_count", 0),
         comment_count=parsed.get("comment_count", 0),
+        cycle_time_days=parsed.get("cycle_time_days"),
+        wait_for_review_hours=parsed.get("wait_for_review_hours"),
+        review_duration_hours=parsed.get("review_duration_hours"),
     )
 
 
@@ -401,6 +415,9 @@ def _update_pr(existing: PullRequest, owner: str, repo_name: str, parsed: dict):
     existing.lines_deleted = parsed.get("lines_deleted", 0)
     existing.review_count = parsed.get("review_count", 0)
     existing.comment_count = parsed.get("comment_count", 0)
+    existing.cycle_time_days = parsed.get("cycle_time_days")
+    existing.wait_for_review_hours = parsed.get("wait_for_review_hours")
+    existing.review_duration_hours = parsed.get("review_duration_hours")
 
 
 def _upsert_reviews(db, pr_id, repo_id, review_nodes):

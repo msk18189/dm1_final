@@ -15,9 +15,12 @@ import time
 import requests
 from typing import Dict, List, Any, Tuple, Optional, Generator
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
-load_dotenv()
+class GitHubRateLimitException(Exception):
+    """Exception raised when GitHub API rate limit is reached or near limit and sleep duration is too long."""
+    def __init__(self, message="GitHub API rate limit exceeded.", sleep_secs=0):
+        super().__init__(message)
+        self.sleep_secs = sleep_secs
 
 
 class MockResponse:
@@ -34,11 +37,6 @@ class MockResponse:
         import json
         return json.dumps(self._json_data)
 
-
-# ---------------------------------------------------------------------------
-# GraphQL Client (existing, preserved + enhanced)
-# ---------------------------------------------------------------------------
-
 class GitHubClient:
     def __init__(self, token: str = None):
         self.token = token
@@ -46,10 +44,7 @@ class GitHubClient:
 
         self.headers = {"Content-Type": "application/json"}
         if self.token:
-            if self.token.startswith("github_pat_"):
-                self.headers["Authorization"] = f"Bearer {self.token}"
-            else:
-                self.headers["Authorization"] = f"token {self.token}"
+            self.headers["Authorization"] = f"Bearer {self.token}"
 
     def query(self, query: str, variables: Dict = None) -> Dict:
         """Execute GraphQL query with rate limit handling and retries."""
@@ -74,9 +69,16 @@ class GitHubClient:
                         try:
                             reset_time = float(reset_time_str)
                             sleep_dur = max(1.0, reset_time - time.time() + 2)
+                            if sleep_dur > 10:
+                                raise GitHubRateLimitException(
+                                    f"GitHub GraphQL API rate limited. Need to sleep {sleep_dur:.0f}s. Halting sync to avoid blocking.",
+                                    sleep_secs=sleep_dur
+                                )
                             print(f"[Rate Limit] Sleeping {sleep_dur:.1f}s ...")
                             time.sleep(sleep_dur)
                             continue
+                        except GitHubRateLimitException:
+                            raise
                         except Exception:
                             pass
                     time.sleep(backoff_delay)
@@ -329,7 +331,7 @@ class GitHubClient:
             status = self._classify_module_error(str(e), "discussions")
             print(f"[Telemetry][Discussions] Fetch failed ({status}): {e}")
             if status == "auth":
-                print("[Telemetry][Discussions] Token invalid or expired — check GITHUB_TOKEN / user PAT.")
+                print("[Telemetry][Discussions] Token invalid or expired — check user PAT.")
             elif status == "forbidden":
                 print("[Telemetry][Discussions] Token lacks access to this repository (private repo needs repo scope).")
             return [], {"hasNextPage": False, "endCursor": None}
@@ -740,8 +742,11 @@ class GitHubClient:
             }
 
         elif "repository" in query:
+            is_private = "private" in repo.lower()
+            if is_private and not self.token:
+                return {"data": {"repository": None}}
             repo_payload = {
-                "isPrivate": False,
+                "isPrivate": is_private,
                 "name": repo,
                 "owner": {"login": owner},
                 "diskUsage": 12345,
@@ -787,10 +792,8 @@ class GitHubRestClient:
             "User-Agent": "PRISM-GitHub-Intelligence/2.0",
         })
         if self.token:
-            if self.token.startswith("github_pat_"):
-                self.session.headers["Authorization"] = f"Bearer {self.token}"
-            else:
-                self.session.headers["Authorization"] = f"token {self.token}"
+            self.session.headers["Authorization"] = f"Bearer {self.token}"
+        self.request_count = 0  # Track API requests for budget enforcement
 
     def get_token_scopes(self) -> Dict[str, Any]:
         """Return OAuth scopes granted to the current token (from response headers)."""
@@ -818,6 +821,11 @@ class GitHubRestClient:
         if remaining is not None and int(remaining) < 5:
             if reset_at:
                 sleep_secs = max(1.0, float(reset_at) - time.time() + 2)
+                if sleep_secs > 10:
+                    raise GitHubRateLimitException(
+                        f"GitHub REST API rate limit near limit (remaining: {remaining}). Need to sleep {sleep_secs:.0f}s. Halting sync to avoid blocking.",
+                        sleep_secs=sleep_secs
+                    )
                 print(f"[REST Rate Limit] Near limit. Sleeping {sleep_secs:.0f}s ...")
                 time.sleep(sleep_secs)
 
@@ -829,18 +837,36 @@ class GitHubRestClient:
         backoff = 5.0
         for attempt in range(max_retries):
             try:
+                self.request_count += 1
                 resp = self.session.get(url, params=params, timeout=30)
 
                 if resp.status_code in (403, 429):
-                    reset_at = resp.headers.get("X-RateLimit-Reset")
-                    if reset_at:
-                        sleep_secs = max(1.0, float(reset_at) - time.time() + 2)
-                        print(f"[REST] Rate limited. Sleeping {sleep_secs:.0f}s ...")
-                        time.sleep(sleep_secs)
+                    body_text = resp.text.lower()
+                    is_rate_limit = (
+                        resp.status_code == 429
+                        or "rate limit" in body_text
+                        or "secondary" in body_text
+                        or "abuse limit" in body_text
+                        or "spammer" in body_text
+                        or resp.headers.get("X-RateLimit-Reset") is not None
+                    )
+                    if is_rate_limit:
+                        reset_at = resp.headers.get("X-RateLimit-Reset")
+                        if reset_at:
+                            sleep_secs = max(1.0, float(reset_at) - time.time() + 2)
+                            if sleep_secs > 10:
+                                raise GitHubRateLimitException(
+                                    f"GitHub REST API rate limited. Need to sleep {sleep_secs:.0f}s. Halting sync to avoid blocking.",
+                                    sleep_secs=sleep_secs
+                                )
+                            print(f"[REST] Rate limited. Sleeping {sleep_secs:.0f}s ...")
+                            time.sleep(sleep_secs)
+                        else:
+                            time.sleep(backoff)
+                            backoff *= 2
+                        continue
                     else:
-                        time.sleep(backoff)
-                        backoff *= 2
-                    continue
+                        raise Exception(f"403 Forbidden: Permission denied or invalid scope. Response: {resp.text[:200]}")
 
                 if resp.status_code == 401:
                     raise Exception("Bad credentials: GitHub token invalid or expired")
@@ -1074,15 +1100,16 @@ class GitHubRestClient:
         except Exception as e:
             print(f"[Estimate] Error fetching contributors count: {e}")
 
-        # 5. Workflows count
+        # 5. Workflows count (active definitions only)
         workflows_count = 0
         try:
             url = f"{self.BASE_URL}/repos/{owner}/{repo}/actions/workflows"
-            resp = self._get(url, params={"per_page": 1})
+            resp = self._get(url, params={"per_page": 100})
             if resp.status_code == 200:
                 data = resp.json()
-                if isinstance(data, dict):
-                    workflows_count = data.get("total_count", 0)
+                workflows = data.get("workflows", []) or []
+                active_wfs = [w for w in workflows if isinstance(w, dict) and w.get("state") == "active"]
+                workflows_count = len(active_wfs)
         except Exception as e:
             print(f"[Estimate] Error fetching workflows count: {e}")
 
@@ -1118,18 +1145,21 @@ class GitHubRestClient:
 
         # 5d. Workflow runs count
         workflow_runs_count = 0
-        try:
-            url = f"{self.BASE_URL}/repos/{owner}/{repo}/actions/runs"
-            resp = self._get(url, params={"per_page": 1})
-            if resp.status_code == 200:
-                link = resp.headers.get("Link", "")
-                if link:
-                    last_page = self._parse_last_page_from_link(link)
-                    workflow_runs_count = last_page if last_page else len(resp.json())
-                else:
-                    workflow_runs_count = len(resp.json())
-        except Exception as e:
-            print(f"[Estimate] Error fetching workflow runs count: {e}")
+        if workflows_count > 0:
+            try:
+                url = f"{self.BASE_URL}/repos/{owner}/{repo}/actions/runs"
+                resp = self._get(url, params={"per_page": 1})
+                if resp.status_code == 200:
+                    link = resp.headers.get("Link", "")
+                    if link:
+                        last_page = self._parse_last_page_from_link(link)
+                        workflow_runs_count = last_page if last_page else len(resp.json())
+                    else:
+                        workflow_runs_count = len(resp.json())
+            except Exception as e:
+                print(f"[Estimate] Error fetching workflow runs count: {e}")
+        else:
+            workflow_runs_count = 0
 
         # 6. Discussions count
         discussions_count = 0
@@ -1469,6 +1499,10 @@ class GitHubRestClient:
                 if v is not None:
                     query_params[k] = [str(v)]
 
+        # If a private repository and no token, simulate 404 Not Found
+        if "private" in path.lower() and not self.token:
+            return MockResponse({"message": "Not Found", "documentation_url": "https://docs.github.com/rest/repos/repos#get-a-repository"}, status_code=404)
+
         # Extract page number
         page = 1
         if "page" in query_params:
@@ -1482,6 +1516,7 @@ class GitHubRestClient:
         if meta_match:
             owner = meta_match.group(1)
             repo = meta_match.group(2)
+            is_private = "private" in repo.lower()
             data = {
                 "id": 987654,
                 "name": repo,
@@ -1495,7 +1530,8 @@ class GitHubRestClient:
                 "stargazers_count": 42,
                 "watchers_count": 42,
                 "forks_count": 15,
-                "visibility": "public"
+                "private": is_private,
+                "visibility": "private" if is_private else "public"
             }
             return MockResponse(data)
 

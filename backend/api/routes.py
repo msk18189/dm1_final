@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database.database import get_db, SessionLocal
@@ -17,9 +17,28 @@ from datetime import datetime, timezone
 from typing import Optional
 import io
 import threading
-
+from playwright.async_api import async_playwright
 
 router = APIRouter()
+
+def normalize_telemetry_counts(synced: int, expected: int) -> tuple:
+    """Normalize telemetry (synced, expected) into a safe renderable pair.
+
+    Returns (safe_synced, safe_expected):
+    - If expected <= 0 AND synced <= 0: returns (0, 0) → frontend renders "—"
+    - If expected <= 0 AND synced > 0: returns (synced, synced) → shows "N / N"
+    - If synced > expected: clamps expected up to synced
+    - Otherwise: returns (synced, expected) as-is
+
+    Frontend contract: if safe_expected == 0, render "—" instead of "0 / 0".
+    """
+    s = synced if synced is not None else 0
+    exp = expected if expected is not None else 0
+    if exp <= 0 and s <= 0:
+        return (0, 0)
+    if exp <= 0 and s > 0:
+        return (s, s)
+    return (s, max(exp, s))
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +210,11 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
         error_msg = str(e)
         if "Bad credentials" in error_msg or "401" in error_msg:
             raise HTTPException(status_code=400, detail="GitHub token is invalid or expired.")
-        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg or "404" in error_msg or "private" in error_msg.lower():
-            raise HTTPException(status_code=400, detail="Repository not found or is private (GitHub PAT required).")
+        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg or "404" in error_msg or "private" in error_msg.lower() or "forbidden" in error_msg.lower():
+            if user_token:
+                raise HTTPException(status_code=400, detail="Repository not found or PAT does not have access permissions. Verify PAT scopes.")
+            else:
+                raise HTTPException(status_code=400, detail="Repository not found or is private (GitHub PAT required).")
         raise HTTPException(status_code=400, detail=error_msg)
 
 
@@ -223,6 +245,14 @@ def get_repositories(db: Session = Depends(get_db)):
                 "total_workflow_runs": r.total_workflow_runs,
                 "total_discussions": r.total_discussions,
                 "total_projects": getattr(r, "total_projects", 0) or 0,
+                "expected_prs": normalize_telemetry_counts(r.synced_prs, r.expected_prs)[1],
+                "expected_issues": normalize_telemetry_counts(r.synced_issues, r.expected_issues)[1],
+                "expected_forks": normalize_telemetry_counts(r.synced_forks, r.expected_forks)[1],
+                "expected_workflows": normalize_telemetry_counts(r.synced_workflows, r.expected_workflows)[1],
+                "synced_prs": normalize_telemetry_counts(r.synced_prs, r.expected_prs)[0],
+                "synced_issues": normalize_telemetry_counts(r.synced_issues, r.expected_issues)[0],
+                "synced_forks": normalize_telemetry_counts(r.synced_forks, r.expected_forks)[0],
+                "synced_workflows": normalize_telemetry_counts(r.synced_workflows, r.expected_workflows)[0],
             })
         return res
     except Exception as e:
@@ -230,7 +260,11 @@ def get_repositories(db: Session = Depends(get_db)):
 
 
 @router.post("/api/analyze")
-def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
+def analyze_repository(
+    request: RepositoryRequest,
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+):
     """Trigger full repository ingestion via SyncEngine (background)."""
     try:
         url = request.url.strip()
@@ -238,7 +272,12 @@ def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)
         canonical_url = normalize_github_url(owner, repo_name)
         token = (request.github_token or "").strip() or None
 
-        # Create or reset repo record
+        # Extract authenticated user (optional)
+        current_user = None
+        if authorization:
+            from api.dependencies import _extract_user
+            current_user = _extract_user(authorization, db)
+
         repo = db.query(Repository).filter(
             Repository.owner == owner,
             Repository.name == repo_name
@@ -253,19 +292,34 @@ def analyze_repository(request: RepositoryRequest, db: Session = Depends(get_db)
                 url=canonical_url,
                 source_url=url,
                 stars=0,
-                sync_status="SYNCING",
+                sync_status="PENDING",
                 sync_progress="Enqueuing background ingestion job...",
             )
             db.add(repo)
             db.commit()
             db.refresh(repo)
         else:
-            repo.sync_status = "SYNCING"
+            repo.sync_status = "PENDING"
             repo.sync_progress = "Enqueuing background ingestion job..."
             db.commit()
             db.refresh(repo)
 
-        # Launch background sync thread
+        # Associate repo with authenticated user
+        if current_user:
+            from database.models import UserRepository
+            existing_assoc = db.query(UserRepository).filter(
+                UserRepository.user_id == current_user.id,
+                UserRepository.repo_id == repo.id,
+            ).first()
+            if not existing_assoc:
+                assoc = UserRepository(
+                    user_id=current_user.id,
+                    repo_id=repo.id,
+                    role="owner",
+                )
+                db.add(assoc)
+                db.commit()
+
         threading.Thread(
             target=run_background_sync,
             args=(url, token),
@@ -298,8 +352,10 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "name": repo.name,
         "full_name": repo.full_name,
         "sync_status": repo.sync_status,
+        "sync_mode": getattr(repo, "sync_mode", "full") or "full",
         "sync_progress": repo.sync_progress,
         "sync_duration": repo.sync_duration,
+        "sync_started_at": repo.sync_started_at.isoformat() if getattr(repo, "sync_started_at", None) else None,
         "initial_sync_completed": repo.initial_sync_completed,
         "last_synced_at": repo.last_synced_at.isoformat() if repo.last_synced_at else None,
         "last_successful_sync": repo.last_successful_sync.isoformat() if repo.last_successful_sync else None,
@@ -311,6 +367,14 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "total_workflow_runs": repo.total_workflow_runs,
         "total_discussions": repo.total_discussions,
         "total_projects": getattr(repo, "total_projects", 0) or 0,
+        "expected_prs": normalize_telemetry_counts(repo.synced_prs, repo.expected_prs)[1],
+        "expected_issues": normalize_telemetry_counts(repo.synced_issues, repo.expected_issues)[1],
+        "expected_forks": normalize_telemetry_counts(repo.synced_forks, repo.expected_forks)[1],
+        "expected_workflows": normalize_telemetry_counts(repo.synced_workflows, repo.expected_workflows)[1],
+        "synced_prs": normalize_telemetry_counts(repo.synced_prs, repo.expected_prs)[0],
+        "synced_issues": normalize_telemetry_counts(repo.synced_issues, repo.expected_issues)[0],
+        "synced_forks": normalize_telemetry_counts(repo.synced_forks, repo.expected_forks)[0],
+        "synced_workflows": normalize_telemetry_counts(repo.synced_workflows, repo.expected_workflows)[0],
         "rate_limit_remaining": repo.rate_limit_remaining,
         "rate_limit_limit": repo.rate_limit_limit,
         "rate_limit_reset": repo.rate_limit_reset.isoformat() if repo.rate_limit_reset else None,
@@ -626,8 +690,46 @@ def export_report_pdf(
     db: Session = Depends(get_db),
 ):
     try:
-        ext = ExtendedAnalytics(db)
-        pdf_bytes = ext.build_export_pdf(repo_id, days, author, state, start_date, end_date)
+        # Check if repo exists
+        repo = db.query(Repository).filter(Repository.id == repo_id).first()
+        if not repo:
+            raise ValueError("Repository not found")
+
+        # Construct frontend URL
+        # We assume frontend is running on localhost:3000 in this environment
+        frontend_url = f"http://localhost:3000/report/{repo_id}"
+        query_params = []
+        if days: query_params.append(f"days={days}")
+        if author: query_params.append(f"author={author}")
+        if state: query_params.append(f"state={state}")
+        if start_date: query_params.append(f"start_date={start_date}")
+        if end_date: query_params.append(f"end_date={end_date}")
+        
+        if query_params:
+            frontend_url += "?" + "&".join(query_params)
+
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+            page = browser.new_page(
+                viewport={"width": 1200, "height": 800},
+            )
+            
+            # Navigate and wait for network to be idle so all data and charts load
+            page.goto(frontend_url, wait_until="networkidle", timeout=60000)
+            
+            # Wait an additional second to ensure animations are settled if any
+            page.wait_for_timeout(1000)
+
+            # Generate PDF
+            pdf_bytes = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"}
+            )
+            
+            browser.close()
+
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
@@ -636,6 +738,8 @@ def export_report_pdf(
     except ValueError as e:
         status = 404 if "not found" in str(e).lower() else 400
         raise HTTPException(status_code=status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

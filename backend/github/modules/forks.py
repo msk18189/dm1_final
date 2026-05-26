@@ -31,6 +31,10 @@ def sync_forks(
     total_synced = 0
     batch_buffer = []
 
+    # Initialize synced count from database count
+    repo.synced_forks = db.query(Fork).filter(Fork.repo_id == repo.id).count()
+    db.commit()
+
     records_fetched = 0
     records_inserted = 0
     records_updated = 0
@@ -106,6 +110,7 @@ def sync_forks(
                     )
                     db.add(fork)
                     records_inserted += 1
+                    repo.synced_forks += 1
                     print(f"[Telemetry][Forks] Incremental Decision: Inserting brand new Fork '{full_name}'.")
 
                 total_synced += 1
@@ -143,6 +148,7 @@ def sync_forks(
         print(f"[Telemetry][Forks] Pruned {len(to_delete)} forks from database.")
 
     repo.total_forks = db.query(Fork).filter(Fork.repo_id == repo.id).count()
+    repo.synced_forks = repo.total_forks
     db.commit()
 
     if progress:

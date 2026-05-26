@@ -49,7 +49,7 @@ class DataProcessor:
         """Process GitHub repository and extract PR data.
 
         github_token: optional PAT from the user (for private repos or higher limits).
-        Falls back to GITHUB_TOKEN in environment when omitted.
+        Uses anonymous access when omitted (public repos only).
         """
         try:
             # Parse URL
@@ -274,20 +274,20 @@ class DataProcessor:
         closed_prs = sum(1 for pr in prs if pr.state in ("MERGED", "CLOSED"))
 
         cycle_times = [pr.cycle_time_days for pr in prs if pr.cycle_time_days is not None]
-        avg_cycle_time = round(sum(cycle_times) / len(cycle_times), 2) if cycle_times else 0.0
+        avg_cycle_time = round(sum(cycle_times) / len(cycle_times), 2) if cycle_times else None
 
         review_durations = [pr.review_duration_hours for pr in prs if pr.review_duration_hours is not None]
         avg_review_duration = (
             round(sum(review_durations) / len(review_durations) / 24, 2)
             if review_durations
-            else 0.0
+            else None
         )
 
         wait_hours = [pr.wait_for_review_hours for pr in prs if pr.wait_for_review_hours is not None]
         avg_wait_for_review = (
             round(sum(wait_hours) / len(wait_hours) / 24, 2)
             if wait_hours
-            else 0.0
+            else None
         )
 
         merge_rate = round((merged_prs / closed_prs * 100) if closed_prs else 0, 2)

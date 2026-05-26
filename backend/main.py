@@ -5,7 +5,7 @@ from database.database import init_db
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD, API_WORKERS
 import os
 import sys
-
+import asyncio
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -15,6 +15,10 @@ app = FastAPI(
     description="Enterprise-grade GitHub repository intelligence: PRs, Issues, Branches, CI/CD, Forks, Discussions, Projects",
 )
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(
+        asyncio.WindowsProactorEventLoopPolicy()
+    )
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,

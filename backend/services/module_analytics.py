@@ -59,6 +59,8 @@ class IssueAnalytics:
             Issue.resolution_hours > 0
         ).scalar() or 0.0)
 
+        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+
         return {
             "total_issues": total,
             "open_issues": open_count,
@@ -68,6 +70,14 @@ class IssueAnalytics:
             "avg_resolution_hours": round(avg_resolution, 1),
             "avg_resolution_days": round(avg_resolution / 24, 1) if avg_resolution else 0,
             "closure_rate": round((closed_count / total * 100) if total else 0, 1),
+            "expected_prs": repo.expected_prs if repo else 0,
+            "synced_prs": repo.synced_prs if repo else 0,
+            "expected_issues": repo.expected_issues if repo else 0,
+            "synced_issues": repo.synced_issues if repo else 0,
+            "expected_forks": repo.expected_forks if repo else 0,
+            "synced_forks": repo.synced_forks if repo else 0,
+            "expected_workflows": repo.expected_workflows if repo else 0,
+            "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
     def get_issues_list(self, repo_id: int, state: str = "all", page: int = 1,
@@ -249,6 +259,8 @@ class ForkAnalytics:
         starred_forks = base.filter(Fork.stars > 0).count()
         avg_stars = float(self.db.query(func.avg(Fork.stars)).filter(Fork.repo_id == repo_id).scalar() or 0.0)
 
+        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+
         return {
             "total_forks": total,
             "active_forks": active_count,
@@ -256,6 +268,14 @@ class ForkAnalytics:
             "starred_forks": starred_forks,
             "avg_fork_stars": round(avg_stars, 1),
             "adoption_rate": round((active_count / total * 100) if total else 0, 1),
+            "expected_prs": repo.expected_prs if repo else 0,
+            "synced_prs": repo.synced_prs if repo else 0,
+            "expected_issues": repo.expected_issues if repo else 0,
+            "synced_issues": repo.synced_issues if repo else 0,
+            "expected_forks": repo.expected_forks if repo else 0,
+            "synced_forks": repo.synced_forks if repo else 0,
+            "expected_workflows": repo.expected_workflows if repo else 0,
+            "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
     def get_forks_list(self, repo_id: int, page: int = 1, limit: int = 20,
@@ -337,6 +357,8 @@ class CICDAnalytics:
             if ws.total > 5 and (ws.failures / ws.total) > 0.2
         )
 
+        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+
         return {
             "total_runs": total_runs,
             "successful_runs": successful,
@@ -346,6 +368,14 @@ class CICDAnalytics:
             "avg_duration_seconds": int(avg_duration),
             "avg_duration_minutes": round(avg_duration / 60, 1) if avg_duration else 0,
             "flaky_workflows": flaky_workflows,
+            "expected_prs": repo.expected_prs if repo else 0,
+            "synced_prs": repo.synced_prs if repo else 0,
+            "expected_issues": repo.expected_issues if repo else 0,
+            "synced_issues": repo.synced_issues if repo else 0,
+            "expected_forks": repo.expected_forks if repo else 0,
+            "synced_forks": repo.synced_forks if repo else 0,
+            "expected_workflows": repo.expected_workflows if repo else 0,
+            "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
     def get_runs_list(self, repo_id: int, page: int = 1, limit: int = 20,

@@ -5,10 +5,11 @@ import bcrypt
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
-# Secret key configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "prism-secure-jwt-secret-key-change-in-prod-123456")
+from config import JWT_SECRET
+
+# Algorithm configuration
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days persistent session
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  
 
 # Pydantic schemas for auth
 class UserSignup(BaseModel):
@@ -47,12 +48,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
 
 def decode_access_token(token: str) -> Optional[dict]:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
         return payload
     except jwt.PyJWTError:
         return None

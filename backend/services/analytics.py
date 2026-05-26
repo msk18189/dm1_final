@@ -114,21 +114,21 @@ class AnalyticsService:
             if pr.created_at and _ensure_utc(pr.created_at) < cutoff_date
         )
     
-    def get_avg_cycle_time(self, repo_id: int) -> float:
+    def get_avg_cycle_time(self, repo_id: int) -> Optional[float]:
         result = self.db.query(func.avg(PullRequest.cycle_time_days)).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.cycle_time_days.isnot(None)
         ).scalar()
-        return round(float(result or 0), 2)
+        return round(float(result), 2) if result is not None else None
     
-    def get_median_cycle_time(self, repo_id: int) -> float:
+    def get_median_cycle_time(self, repo_id: int) -> Optional[float]:
         prs = self.db.query(PullRequest.cycle_time_days).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.cycle_time_days.isnot(None)
         ).all()
         
         if not prs:
-            return 0
+            return None
         
         values = sorted([p[0] for p in prs])
         n = len(values)
@@ -147,19 +147,19 @@ class AnalyticsService:
         
         return round((merged / closed * 100) if closed > 0 else 0, 2)
     
-    def get_avg_review_duration(self, repo_id: int) -> float:
+    def get_avg_review_duration(self, repo_id: int) -> Optional[float]:
         result = self.db.query(func.avg(PullRequest.review_duration_hours)).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.review_duration_hours.isnot(None)
         ).scalar()
-        return round(float(result or 0) / 24, 2)  # Convert to days
+        return round(float(result) / 24, 2) if result is not None else None
     
-    def get_avg_wait_for_review(self, repo_id: int) -> float:
+    def get_avg_wait_for_review(self, repo_id: int) -> Optional[float]:
         result = self.db.query(func.avg(PullRequest.wait_for_review_hours)).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.wait_for_review_hours.isnot(None)
         ).scalar()
-        return round(float(result or 0) / 24, 2)  # Convert to days
+        return round(float(result) / 24, 2) if result is not None else None
     
     def get_pr_throughput(self, repo_id: int, weeks: int = 8) -> List[Dict[str, Any]]:
         """PRs merged per ISO week (chronological, zero-filled)."""
@@ -340,10 +340,10 @@ class AnalyticsService:
                 "open_prs": entry["open_prs"],
                 "avg_cycle_time": round(
                     sum(entry["cycle_times"]) / len(entry["cycle_times"]), 2
-                ) if entry["cycle_times"] else 0,
+                ) if entry["cycle_times"] else None,
                 "avg_wait_for_review": round(
                     (sum(entry["wait_hours"]) / len(entry["wait_hours"])) / 24, 2
-                ) if entry["wait_hours"] else 0,
+                ) if entry["wait_hours"] else None,
                 "merge_rate": round((entry["merged_prs"] / total * 100) if total > 0 else 0, 2),
                 "stale_pr_count": entry["stale_pr_count"],
             })
@@ -351,9 +351,10 @@ class AnalyticsService:
         result.sort(key=lambda x: x["total_prs"], reverse=True)
         return result[:limit]
     
-    def get_median_cycle_time_rounded(self, repo_id: int) -> float:
+    def get_median_cycle_time_rounded(self, repo_id: int) -> Optional[float]:
         """Get median cycle time rounded to 1 decimal"""
-        return round(self.get_median_cycle_time(repo_id), 1)
+        median = self.get_median_cycle_time(repo_id)
+        return round(median, 1) if median is not None else None
     
     def get_avg_reviews_per_pr(self, repo_id: int) -> float:
         """Average number of reviews per PR"""

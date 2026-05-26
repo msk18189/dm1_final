@@ -60,9 +60,11 @@ class Repository(Base):
 
     # Sync metadata
     sync_status = Column(String(50), default="IDLE", nullable=False)
+    sync_mode = Column(String(50), default="full")       # full / lightweight / partial
     sync_progress = Column(String(512), nullable=True)
     sync_error = Column(Text, nullable=True)
     sync_duration = Column(Float, nullable=True)         # seconds
+    sync_started_at = Column(DateTime, nullable=True)
     initial_sync_completed = Column(Boolean, default=False)
     last_synced_at = Column(DateTime, nullable=True, index=True)
     last_successful_sync = Column(DateTime, nullable=True)
@@ -76,6 +78,18 @@ class Repository(Base):
     total_workflow_runs = Column(Integer, default=0)
     total_discussions = Column(Integer, default=0)
     total_projects = Column(Integer, default=0)
+
+    # Expected and Synced counts for progress tracking
+    expected_prs = Column(Integer, default=0)
+    expected_issues = Column(Integer, default=0)
+    expected_forks = Column(Integer, default=0)
+    expected_workflows = Column(Integer, default=0)
+
+    synced_prs = Column(Integer, default=0)
+    synced_issues = Column(Integer, default=0)
+    synced_forks = Column(Integer, default=0)
+    synced_workflows = Column(Integer, default=0)
+
 
     # Legacy sync telemetry
     error_message = Column(Text, nullable=True)
@@ -581,3 +595,49 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Relationships
+    repositories = relationship("UserRepository", backref="user", cascade="all, delete-orphan")
+
+
+# ---------------------------------------------------------------------------
+# SUPPORT — USER ↔ REPOSITORY ASSOCIATION
+# ---------------------------------------------------------------------------
+
+class UserRepository(Base):
+    __tablename__ = "user_repositories"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(50), default="owner")  # owner / viewer
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_user_repo_unique", "user_id", "repo_id", unique=True),
+    )
+
+    # Relationship to repository
+    repository = relationship("Repository", backref="user_associations")
+
+
+# ---------------------------------------------------------------------------
+# SUPPORT — SYNC JOB TRACKING
+# ---------------------------------------------------------------------------
+
+class SyncJob(Base):
+    __tablename__ = "sync_jobs"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    celery_task_id = Column(String(255), nullable=True, unique=True, index=True)
+    status = Column(String(50), default="PENDING")  # PENDING/SYNCING/COMPLETED/FAILED/RATE_LIMITED
+    progress_message = Column(String(512), nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    repository = relationship("Repository", backref="sync_jobs")

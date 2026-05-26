@@ -25,6 +25,7 @@ def sync_issues(
     since: Optional[datetime] = None,
     progress=None,
     batch_size: int = 500,
+    lightweight_mode: bool = False,
 ) -> int:
     """
     Full REST paginated issue sync with incremental detection via 'since'.
@@ -53,6 +54,10 @@ def sync_issues(
     fetched_numbers = set()
 
     stop_incremental = False
+    
+    # Initialize synced count from database count
+    repo.synced_issues = db.query(Issue).filter(Issue.repo_id == repo.id).count()
+    db.commit()
     for page_items in rest_client.get_issues(owner, repo_name, since=since_iso):
         page_num += 1
         api_response_count += 1
@@ -87,6 +92,7 @@ def sync_issues(
                 if status == "inserted":
                     records_inserted += 1
                     total_synced += 1
+                    repo.synced_issues += 1
                     batch_buffer.append(total_synced)
                     print(f"[Telemetry][Issues] Incremental Decision: Inserting brand new Issue #{issue.get('number')}.")
                 elif status == "updated":
@@ -118,6 +124,10 @@ def sync_issues(
         if stop_incremental:
             break
 
+        if lightweight_mode:
+            print(f"[Issues] Lightweight mode active: processed one page of issues. Breaking pagination.")
+            break
+
     if batch_buffer:
         db.commit()
         batch_buffer.clear()
@@ -136,6 +146,7 @@ def sync_issues(
 
     # Update repository totals
     repo.total_issues = db.query(Issue).filter(Issue.repo_id == repo.id).count()
+    repo.synced_issues = repo.total_issues
     db.commit()
 
     if progress:

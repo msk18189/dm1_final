@@ -41,6 +41,10 @@ def sync_workflows(
         print(f"[Telemetry][CI/CD] Ingestion Mode: Full sync mode for {owner}/{repo_name}")
 
     total_runs_synced = 0
+    
+    # Initialize synced count from database count
+    repo.synced_workflows = db.query(Workflow).filter(Workflow.repo_id == repo.id, Workflow.state == "active").count()
+    db.commit()
     records_fetched = 0
     records_inserted = 0
     records_updated = 0
@@ -50,6 +54,20 @@ def sync_workflows(
 
     # Step 1: Sync workflow definitions
     workflow_id_map = _sync_workflow_definitions(db, repo, owner, repo_name, rest_client)
+
+    if not workflow_id_map:
+        print(f"[Telemetry][CI/CD] No workflows found on GitHub for {owner}/{repo_name}. Skipping workflow run sync.")
+        repo.total_workflow_runs = 0
+        repo.synced_workflows = 0
+        repo.expected_workflows = 0
+        db.commit()
+        if progress:
+            progress.update(
+                "CI/CD sync complete: 0 runs (no workflows exist)",
+                processed=0,
+                discovered=0,
+            )
+        return 0
 
     # Step 2: Sync workflow runs
     batch_buffer = []
@@ -97,6 +115,7 @@ def sync_workflows(
         batch_buffer.clear()
 
     repo.total_workflow_runs = db.query(WorkflowRun).filter(WorkflowRun.repo_id == repo.id).count()
+    repo.synced_workflows = db.query(Workflow).filter(Workflow.repo_id == repo.id, Workflow.state == "active").count()
     db.commit()
 
     if progress:
@@ -116,10 +135,12 @@ def _sync_workflow_definitions(db, repo, owner, repo_name, rest_client) -> dict:
     workflow_map = {}
     try:
         workflows = rest_client._get_workflows_raw(owner, repo_name)
+        active_github_ids = set()
         for wf in workflows:
             github_id = wf.get("id")
             if not github_id:
                 continue
+            active_github_ids.add(github_id)
             existing = db.query(Workflow).filter(
                 Workflow.repo_id == repo.id,
                 Workflow.github_id == github_id
@@ -142,6 +163,12 @@ def _sync_workflow_definitions(db, repo, owner, repo_name, rest_client) -> dict:
                 db.add(wf_obj)
                 db.flush()
                 workflow_map[github_id] = wf_obj.id
+        
+        db_workflows = db.query(Workflow).filter(Workflow.repo_id == repo.id).all()
+        for db_wf in db_workflows:
+            if db_wf.github_id not in active_github_ids:
+                db_wf.state = "disabled"
+                
         db.commit()
     except Exception as e:
         print(f"[CI/CD] Error syncing workflow definitions: {e}")

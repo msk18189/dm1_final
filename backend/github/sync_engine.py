@@ -13,6 +13,7 @@ Features:
 - Background-safe: designed to run in daemon threads
 - Batch DB commits every SYNC_BATCH_SIZE records
 """
+
 import time
 import json
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 from database.database import SessionLocal
 from database.models import Repository
 from config import SYNC_BATCH_SIZE
+from github.client import GitHubRateLimitException
 
 
 class SyncProgress:
@@ -117,7 +119,13 @@ class SyncEngine:
         engine = SyncEngine(db, repo, gql_client, rest_client)
         engine.run()
     """ 
-    RATE_LIMIT_BUFFER = 50  
+    RATE_LIMIT_BUFFER = 50
+    ANONYMOUS_REQUEST_BUDGET = 55   # leave 5 buffer from 60 limit
+    PAT_REQUEST_BUDGET = 4500       # leave 500 buffer from 5000 limit
+    LIGHTWEIGHT_MAX_PAGES = 3       # max pages per module in lightweight mode
+    LIGHTWEIGHT_MAX_PRS = 100
+    LIGHTWEIGHT_MAX_ISSUES = 100
+    LIGHTWEIGHT_MAX_FORKS = 50
 
     def __init__(self, db: Session, repo: Repository, gql_client, rest_client):
         self.db = db
@@ -128,6 +136,8 @@ class SyncEngine:
         self.repo_name = repo.name
         self.progress = SyncProgress(db, repo)
         self.batch_size = None
+        self.lightweight_mode = False
+        self.budget_exhausted = False
 
     def run(self):
         """
@@ -137,7 +147,11 @@ class SyncEngine:
         sync_start = time.time()
 
         try:
-            self._mark_syncing("Starting full repository ingestion...")
+            # Set VERIFYING status while we fetch estimates
+            self.repo.sync_status = "VERIFYING"
+            self.repo.sync_progress = "Verifying repository access and fetching metadata..."
+            self.repo.sync_started_at = datetime.utcnow()
+            self.db.commit()
 
             # Store initial estimates in repository database record for progress tracking and visibility
             try:
@@ -145,6 +159,23 @@ class SyncEngine:
                 estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
                 self.estimates = estimates
                 
+                # Check for lightweight anonymous mode
+                # If repository is public, no PAT is provided, and estimated requests exceed the safe limit (60)
+                has_token = bool(self.rest.token and self.rest.token.strip())
+                is_private = estimates.get("is_private", False)
+                estimated_reqs = estimates.get("estimated_requests_rest", 0)
+                
+                if not is_private and not has_token and estimated_reqs > 60:
+                    self.lightweight_mode = True
+                    self.repo.sync_mode = "lightweight"
+                    print(f"[SyncEngine] SWITCHING TO LIGHTWEIGHT ANONYMOUS MODE (public repo, no PAT, estimated {estimated_reqs} requests > 60)")
+                else:
+                    self.lightweight_mode = False
+                    self.repo.sync_mode = "full"
+
+                # Transition to SYNCING status
+                self._mark_syncing("Starting repository ingestion...")
+
                 # Update Repository record counts with estimated totals immediately
                 self.repo.total_prs = estimates.get("pr_count", 0)
                 self.repo.total_issues = estimates.get("issues_count", 0)
@@ -152,11 +183,34 @@ class SyncEngine:
                 self.repo.total_forks = estimates.get("forks_count", 0)
                 self.repo.total_workflow_runs = estimates.get("workflow_runs_count", 0)
                 self.repo.total_discussions = estimates.get("discussions_count", 0)
+                
+                # Store expected totals
+                self.repo.expected_prs = estimates.get("pr_count", 0)
+                self.repo.expected_issues = estimates.get("issues_count", 0)
+                self.repo.expected_forks = estimates.get("forks_count", 0)
+                
+                # Verify actual workflows exist before setting expected_workflows
+                self.repo.expected_workflows = estimates.get("workflows_count", 0)
+                if self.repo.expected_workflows == 0:
+                    self.repo.total_workflow_runs = 0
+
+                # Reset synced counts
+                self.repo.synced_prs = 0
+                self.repo.synced_issues = 0
+                self.repo.synced_forks = 0
+                self.repo.synced_workflows = 0
+
                 self.db.commit()
                 print(f"[SyncEngine] Initial estimates stored: prs={self.repo.total_prs}, issues={self.repo.total_issues}, branches={self.repo.total_branches}, forks={self.repo.total_forks}, workflows={self.repo.total_workflow_runs}, discussions={self.repo.total_discussions}")
             except Exception as e:
                 print(f"[SyncEngine] Failed to fetch or persist repository estimates: {e}")
                 self.estimates = {}
+                self.repo.expected_prs = 0
+                self.repo.expected_issues = 0
+                self.repo.expected_forks = 0
+                self.repo.expected_workflows = 0
+                self.lightweight_mode = False
+                self.db.commit()
 
             # Calculate dynamic batch size once before sync starts
             self.batch_size = self._calculate_dynamic_batch_size()
@@ -171,28 +225,45 @@ class SyncEngine:
             self._run_module("issues", self._sync_issues)
 
             # Module 3 — Branches
-            self._run_module("branches", self._sync_branches)
+            if not self.lightweight_mode:
+                self._run_module("branches", self._sync_branches)
+            else:
+                print("[SyncEngine] Branches module skipped in lightweight mode.")
+                self.progress.update("Branches skipped (lightweight mode)", module="branches", persist=True)
+                self.progress.mark_module_done("branches", 0)
 
             # Module 5 — Forks
-            self._run_module("forks", self._sync_forks)
+            if not self.lightweight_mode:
+                self._run_module("forks", self._sync_forks)
+            else:
+                print("[SyncEngine] Forks module skipped in lightweight mode.")
+                self.progress.update("Forks skipped (lightweight mode)", module="forks", persist=True)
+                self.progress.mark_module_done("forks", 0)
 
             # Module 8 — CI/CD Workflows
-            self._run_module("workflows", self._sync_workflows)
+            if not self.lightweight_mode:
+                self._run_module("workflows", self._sync_workflows)
+            else:
+                print("[SyncEngine] Workflows module skipped in lightweight mode.")
+                self.progress.update("Workflows skipped (lightweight mode)", module="workflows", persist=True)
+                self.progress.mark_module_done("workflows", 0)
 
             # Module 6 — Discussions (GraphQL)
-            if self.gql.token:
+            if self.gql.token and not self.lightweight_mode:
                 self._run_module("discussions", self._sync_discussions)
             else:
-                print("[SyncEngine] Discussions module skipped (requires PAT).")
-                self.progress.update("Discussions skipped (requires PAT)", module="discussions", persist=True)
+                reason = "requires PAT" if not self.gql.token else "skipped in lightweight mode"
+                print(f"[SyncEngine] Discussions module skipped ({reason}).")
+                self.progress.update(f"Discussions skipped ({reason})", module="discussions", persist=True)
                 self.progress.mark_module_done("discussions", 0)
 
             # Module 7 — Projects v2 (GraphQL)
-            if self.gql.token:
+            if self.gql.token and not self.lightweight_mode:
                 self._run_module("projects", self._sync_projects)
             else:
-                print("[SyncEngine] Projects module skipped (requires PAT).")
-                self.progress.update("Projects skipped (requires PAT)", module="projects", persist=True)
+                reason = "requires PAT" if not self.gql.token else "skipped in lightweight mode"
+                print(f"[SyncEngine] Projects module skipped ({reason}).")
+                self.progress.update(f"Projects skipped ({reason})", module="projects", persist=True)
                 self.progress.mark_module_done("projects", 0)
 
             # Finalize
@@ -222,6 +293,22 @@ class SyncEngine:
             except Exception as val_err:
                 print(f"[Validation][{self.owner}/{self.repo_name}] Error running validation checks: {val_err}")
 
+        except GitHubRateLimitException as e:
+            print(f"[SyncEngine] Rate limit hit. Gracefully downgrading and stopping sync: {e}")
+            try:
+                self.db.rollback()
+                duration = time.time() - sync_start
+                self.repo.sync_status = "RATE_LIMITED"
+                self.repo.sync_mode = "partial"
+                self.repo.sync_progress = f"Sync stopped: GitHub rate limit exceeded after {SyncProgress._fmt_duration(duration)}. Add PAT for full analysis."
+                self.repo.error_message = f"Rate limit reached. Sync was gracefully downgraded. {str(e)}"
+                self.repo.sync_duration = duration
+                self.repo.last_synced_at = datetime.utcnow()
+                self.repo.initial_sync_completed = True
+                self.db.commit()
+            except Exception as db_err:
+                print(f"[SyncEngine] DB error during rate limit handling: {db_err}")
+
         except Exception as e:
             error_msg = str(e)
             print(f"[SyncEngine] Fatal error: {error_msg}")
@@ -242,16 +329,83 @@ class SyncEngine:
         self.db.commit()
 
     def _run_module(self, module_name: str, fn):
-        """Run a single module sync with error isolation."""
+        """Run a single module sync with transaction isolation and error isolation."""
         print(f"[SyncEngine] Starting module: {module_name}")
         self.progress.update(f"Syncing {module_name.replace('_', ' ').title()}...", module=module_name)
         try:
-            count = fn()
+            # Use a savepoint so module failure doesn't corrupt entire sync
+            savepoint = self.db.begin_nested()
+            try:
+                count = fn()
+                savepoint.commit()
+            except GitHubRateLimitException:
+                try:
+                    savepoint.rollback()
+                except Exception:
+                    pass
+                raise
+            except Exception as e:
+                print(f"[SyncEngine] Module {module_name} failed inside savepoint: {e}")
+                try:
+                    savepoint.rollback()
+                except Exception:
+                    pass
+                raise
+
             self.progress.mark_module_done(module_name, count)
             print(f"[SyncEngine] Module {module_name} done. Records: {count}")
+
+            # Update synced counts from actual DB records (source of truth)
+            self._refresh_synced_telemetry(module_name)
+
+        except GitHubRateLimitException as e:
+            print(f"[SyncEngine] Rate limit exception in module {module_name}: {e}")
+            self._refresh_synced_telemetry(module_name)
+            raise
         except Exception as e:
             print(f"[SyncEngine] Module {module_name} failed: {e}")
             self.progress.update(f"{module_name} failed: {str(e)[:100]}", persist=True)
+            self._refresh_synced_telemetry(module_name)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+
+    def _refresh_synced_telemetry(self, module_name: str):
+        """Update synced telemetry from actual DB record counts (source of truth)."""
+        try:
+            from database.models import PullRequest, Issue, Fork, Workflow
+            if module_name == "pull_requests":
+                self.repo.synced_prs = self.db.query(PullRequest).filter(
+                    PullRequest.repo_id == self.repo.id).count()
+                self.repo.total_prs = self.repo.synced_prs
+            elif module_name == "issues":
+                self.repo.synced_issues = self.db.query(Issue).filter(
+                    Issue.repo_id == self.repo.id).count()
+                self.repo.total_issues = self.repo.synced_issues
+            elif module_name == "forks":
+                from database.models import Fork
+                self.repo.synced_forks = self.db.query(Fork).filter(
+                    Fork.repo_id == self.repo.id).count()
+                self.repo.total_forks = self.repo.synced_forks
+            elif module_name == "workflows":
+                self.repo.synced_workflows = self.db.query(Workflow).filter(
+                    Workflow.repo_id == self.repo.id).count()
+            elif module_name == "branches":
+                from database.models import Branch
+                self.repo.total_branches = self.db.query(Branch).filter(
+                    Branch.repo_id == self.repo.id).count()
+            elif module_name == "discussions":
+                from database.models import Discussion
+                self.repo.total_discussions = self.db.query(Discussion).filter(
+                    Discussion.repo_id == self.repo.id).count()
+            elif module_name == "projects":
+                from database.models import Project
+                self.repo.total_projects = self.db.query(Project).filter(
+                    Project.repo_id == self.repo.id).count()
+            self.db.commit()
+        except Exception as e:
+            print(f"[SyncEngine] Failed to refresh telemetry for {module_name}: {e}")
             try:
                 self.db.rollback()
             except Exception:
@@ -310,19 +464,21 @@ class SyncEngine:
     def _sync_pull_requests(self) -> int:
         from github.modules.pull_requests import sync_pull_requests
         since = self.repo.last_successful_sync
+        sync_since = None if self.lightweight_mode else since
         return sync_pull_requests(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
-            repo=self.repo, since=since, progress=self.progress,
-            batch_size=self.batch_size
+            repo=self.repo, since=sync_since, progress=self.progress,
+            batch_size=self.batch_size, lightweight_mode=self.lightweight_mode
         )
 
     def _sync_issues(self) -> int:
         from github.modules.issues import sync_issues
         since = self.repo.last_successful_sync
+        sync_since = None if self.lightweight_mode else since
         return sync_issues(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
-            repo=self.repo, since=since, progress=self.progress,
-            batch_size=self.batch_size
+            repo=self.repo, since=sync_since, progress=self.progress,
+            batch_size=self.batch_size, lightweight_mode=self.lightweight_mode
         )
 
     def _sync_branches(self) -> int:
