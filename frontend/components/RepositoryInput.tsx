@@ -334,11 +334,18 @@ export default function RepositoryInput({
                 Large repository detected.
               </h3>
               <p className="text-sm text-secondary font-medium">
-                Add GitHub PAT for:
+                GitHub anonymous API limits may be exceeded.
+              </p>
+              <p className="text-sm text-secondary font-medium">
+                Add PAT for:
               </p>
             </div>
 
             <ul className="space-y-2 text-sm text-secondary pl-2 font-medium">
+              <li className="flex items-center gap-2">
+                <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
+                <span>full analysis</span>
+              </li>
               <li className="flex items-center gap-2">
                 <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
                 <span>faster syncing</span>
@@ -346,10 +353,6 @@ export default function RepositoryInput({
               <li className="flex items-center gap-2">
                 <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
                 <span>deeper analytics</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <ShieldCheck className="h-4.5 w-4.5 text-palette-emerald" />
-                <span>higher API limits</span>
               </li>
             </ul>
 
@@ -375,7 +378,7 @@ export default function RepositoryInput({
                 }}
                 className="btn-secondary text-sm flex-1 py-3 justify-center !rounded-xl"
               >
-                Continue without PAT (lightweight sync)
+                Continue lightweight analysis
               </button>
               <button
                 type="button"
@@ -390,7 +393,7 @@ export default function RepositoryInput({
                 disabled={!githubToken.trim()}
                 className="btn-primary text-sm flex-1 py-3 justify-center disabled:opacity-50 disabled:cursor-not-allowed !rounded-xl"
               >
-                Add PAT for full analysis
+                Add PAT
               </button>
             </div>
             

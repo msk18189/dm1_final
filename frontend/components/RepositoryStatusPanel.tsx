@@ -2,9 +2,10 @@
 
 import { Database, RefreshCw, CheckCircle2, XCircle, Info, Clock } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { formatTelemetry } from '@/lib/format'
 
 interface SyncStatus {
-  sync_status: 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED'
+  sync_status: 'IDLE' | 'PENDING' | 'VERIFYING' | 'SYNCING' | 'COMPLETED' | 'FAILED' | 'PARTIAL' | 'RATE_LIMITED'
   sync_progress: string | null
   sync_duration: number | null
   initial_sync_completed: boolean
@@ -20,6 +21,14 @@ interface SyncStatus {
   total_projects: number
   rate_limit_remaining: number | null
   rate_limit_limit: number | null
+  expected_prs?: number
+  expected_issues?: number
+  expected_forks?: number
+  expected_workflows?: number
+  synced_prs?: number
+  synced_issues?: number
+  synced_forks?: number
+  synced_workflows?: number
 }
 
 interface Props {
@@ -29,10 +38,14 @@ interface Props {
   isSyncing: boolean
 }
 
-const statusColors = {
+const statusColors: Record<string, string> = {
+  PENDING: 'bg-slate-50 text-slate-800 border-slate-200',
+  VERIFYING: 'bg-amber-50 text-amber-800 border-amber-200',
   SYNCING: 'bg-amber-50 text-amber-800 border-amber-200',
   COMPLETED: 'bg-emerald-50 text-emerald-800 border-emerald-200',
   FAILED: 'bg-rose-50 text-rose-800 border-rose-200',
+  PARTIAL: 'bg-orange-50 text-orange-800 border-orange-200',
+  RATE_LIMITED: 'bg-rose-50 text-rose-800 border-rose-200',
   IDLE: 'bg-indigo-50 text-indigo-800 border-indigo-200',
 }
 
@@ -54,7 +67,7 @@ function fmt(iso: string | null): string {
 
 export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, isSyncing }: Props) {
   const status = syncStatus.sync_status
-  const isBusy = status === 'SYNCING' || isSyncing
+  const isBusy = status === 'SYNCING' || status === 'PENDING' || status === 'VERIFYING' || isSyncing
 
   return (
     <motion.div
@@ -69,11 +82,12 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
             <Database className="h-4 w-4 text-indigo-600 shrink-0" />
             <h3 className="text-sm font-bold text-primary">{repoLabel}</h3>
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${statusColors[status] ?? statusColors.IDLE}`}>
-              {status === 'SYNCING' && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
+              {(status === 'SYNCING' || status === 'PENDING' || status === 'VERIFYING') && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
               {status === 'COMPLETED' && <CheckCircle2 className="w-2.5 h-2.5" />}
-              {status === 'FAILED' && <XCircle className="w-2.5 h-2.5" />}
+              {(status === 'FAILED' || status === 'RATE_LIMITED') && <XCircle className="w-2.5 h-2.5" />}
+              {status === 'PARTIAL' && <Info className="w-2.5 h-2.5" />}
               {status === 'IDLE' && <Info className="w-2.5 h-2.5" />}
-              {status}
+              {status === 'RATE_LIMITED' ? 'Rate Limited' : status}
             </span>
             {syncStatus.initial_sync_completed && (
               <span className="text-[10px] bg-warm-100 text-secondary border border-warm-200 px-2 py-0.5 rounded-full">
@@ -88,13 +102,31 @@ export default function RepositoryStatusPanel({ repoLabel, syncStatus, onSync, i
 
           {/* Module record counts */}
           <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 border-t border-warm-200/60 pt-3">
-            <MetricCell label="PRs" value={syncStatus.total_prs ?? 0} />
-            <MetricCell label="Issues" value={syncStatus.total_issues ?? 0} />
+            <MetricCell 
+              label="PRs" 
+              value={formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs)} 
+            />
+            <MetricCell 
+              label="Issues" 
+              value={formatTelemetry(syncStatus.synced_issues || syncStatus.total_issues, syncStatus.expected_issues)} 
+            />
             <MetricCell label="Branches" value={syncStatus.total_branches ?? 0} />
-            <MetricCell label="Forks" value={syncStatus.total_forks ?? 0} />
-            <MetricCell label="CI Runs" value={syncStatus.total_workflow_runs ?? 0} />
-            <MetricCell label="Discussions" value={syncStatus.total_discussions ?? 0} />
-            <MetricCell label="Projects" value={syncStatus.total_projects ?? 0} />
+            <MetricCell 
+              label="Forks" 
+              value={formatTelemetry(syncStatus.synced_forks || syncStatus.total_forks, syncStatus.expected_forks)} 
+            />
+            <MetricCell 
+              label="CI Runs" 
+              value={formatTelemetry(syncStatus.synced_workflows || syncStatus.total_workflow_runs, syncStatus.expected_workflows)} 
+            />
+            <MetricCell 
+              label="Discussions" 
+              value={formatTelemetry(syncStatus.total_discussions, 0)} 
+            />
+            <MetricCell 
+              label="Projects" 
+              value={formatTelemetry(syncStatus.total_projects, 0)} 
+            />
           </div>
 
           <div className="flex flex-wrap gap-4 mt-3 border-t border-warm-200/60 pt-3">

@@ -53,7 +53,7 @@ const renderColorLegend = (value: string) => {
   )
 }
 
-export function MonthlyFlowChart({ data }: { data: any[] }) {
+export function MonthlyFlowChart({ data, isAnimationActive = true }: { data: any[], isAnimationActive?: boolean }) {
   const chartData = Array.isArray(data)
     ? data
     : Object.entries(data || {}).map(([month, flow]: [string, any]) => ({
@@ -74,16 +74,16 @@ export function MonthlyFlowChart({ data }: { data: any[] }) {
           <YAxis stroke={CHART.axis} allowDecimals={false} tick={{ fill: CHART.axis }} axisLine={false} tickLine={false} />
           <Tooltip contentStyle={tooltipStyle} />
           <Legend wrapperStyle={legendStyle} formatter={renderColorLegend} />
-          <Bar dataKey="created" name="Created" fill={CHART.created} radius={[6, 6, 0, 0]} />
-          <Bar dataKey="merged" name="Merged" fill={CHART.merged} radius={[6, 6, 0, 0]} />
-          <Bar dataKey="closed" name="Closed (unmerged)" fill={CHART.closed} radius={[6, 6, 0, 0]} />
+          <Bar dataKey="created" name="Created" fill={CHART.created} radius={[6, 6, 0, 0]} isAnimationActive={isAnimationActive} />
+          <Bar dataKey="merged" name="Merged" fill={CHART.merged} radius={[6, 6, 0, 0]} isAnimationActive={isAnimationActive} />
+          <Bar dataKey="closed" name="Closed (unmerged)" fill={CHART.closed} radius={[6, 6, 0, 0]} isAnimationActive={isAnimationActive} />
         </BarChart>
       </ResponsiveContainer>
     </ChartShell>
   )
 }
 
-export function ThroughputChart({ data }: { data: any[] | Record<string, number> }) {
+export function ThroughputChart({ data, isAnimationActive = true }: { data: any[] | Record<string, number>, isAnimationActive?: boolean }) {
   const chartData = Array.isArray(data)
     ? data
     : Object.entries(data || {})
@@ -116,6 +116,7 @@ export function ThroughputChart({ data }: { data: any[] | Record<string, number>
             stroke={CHART.line}
             strokeWidth={2.5}
             fill="url(#throughputGrad)"
+            isAnimationActive={isAnimationActive}
             dot={{ fill: CHART.line, r: 4, strokeWidth: 0 }}
             activeDot={{ r: 6, fill: '#fff', stroke: CHART.line, strokeWidth: 2 }}
           />

@@ -4,8 +4,9 @@ import { CircleDot, Bug, Clock, TrendingDown, AlertTriangle } from 'lucide-react
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { motion } from 'framer-motion'
 import { getIssuesAnalytics, getIssues, getStaleIssues } from '@/lib/api'
+import { formatTelemetry } from '@/lib/format'
 
-interface Props { repoId: number }
+interface Props { repoId: number; syncStatus?: any }
 
 const TABS = ['All Issues', 'Stale Issues'] as const
 type Tab = typeof TABS[number]
@@ -22,7 +23,7 @@ function StatCard({ icon, label, value, sub, accent }: any) {
   )
 }
 
-export default function IssuesPanel({ repoId }: Props) {
+export default function IssuesPanel({ repoId, syncStatus }: Props) {
   const [analytics, setAnalytics] = useState<any>(null)
   const [issues, setIssues] = useState<any>(null)
   const [stale, setStale] = useState<any>(null)
@@ -60,7 +61,7 @@ export default function IssuesPanel({ repoId }: Props) {
     <div className="space-y-6">
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard icon={<CircleDot className="h-4 w-4 text-indigo-500" />} label="Total Issues" value={(summary?.total_issues ?? 0).toLocaleString()} accent="bg-indigo-50" />
+        <StatCard icon={<CircleDot className="h-4 w-4 text-indigo-500" />} label="Total Issues" value={syncStatus ? formatTelemetry(syncStatus.synced_issues || syncStatus.total_issues, syncStatus.expected_issues) : (summary ? formatTelemetry(summary.synced_issues || summary.total_issues, summary.expected_issues) : '—')} accent="bg-indigo-50" />
         <StatCard icon={<CircleDot className="h-4 w-4 text-emerald-500" />} label="Open" value={(summary?.open_issues ?? 0).toLocaleString()} accent="bg-emerald-50" />
         <StatCard icon={<CircleDot className="h-4 w-4 text-secondary" />} label="Closed" value={(summary?.closed_issues ?? 0).toLocaleString()} accent="bg-warm-100" />
         <StatCard icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} label="Stale (30d+)" value={(summary?.stale_issues ?? 0).toLocaleString()} accent="bg-amber-50" />

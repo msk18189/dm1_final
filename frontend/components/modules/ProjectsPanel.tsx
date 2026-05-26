@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react'
 import { Kanban, CheckCircle2, Circle } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { getProjectsAnalytics, getProjects } from '@/lib/api'
+import { formatTelemetry } from '@/lib/format'
 
-interface Props { repoId: number }
+interface Props { repoId: number; syncStatus?: any }
 
-export default function ProjectsPanel({ repoId }: Props) {
+export default function ProjectsPanel({ repoId, syncStatus }: Props) {
   const [summary, setSummary] = useState<any>(null)
   const [projects, setProjects] = useState<any>(null)
   const [page, setPage] = useState(1)
@@ -36,7 +37,7 @@ export default function ProjectsPanel({ repoId }: Props) {
 
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Total Projects', value: summary?.total_projects ?? 0, icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'bg-indigo-50' },
+          { label: 'Total Projects', value: syncStatus ? formatTelemetry(syncStatus.total_projects, 0) : (summary ? formatTelemetry(summary.total_projects, 0) : '—'), icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'bg-indigo-50' },
           { label: 'Open', value: summary?.open_projects ?? 0, icon: <Circle className="h-4 w-4 text-emerald-500" />, accent: 'bg-emerald-50' },
           { label: 'Closed', value: summary?.closed_projects ?? 0, icon: <CheckCircle2 className="h-4 w-4 text-secondary" />, accent: 'bg-warm-100' },
         ].map(({ label, value, icon, accent }) => (

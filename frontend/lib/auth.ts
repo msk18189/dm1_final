@@ -88,6 +88,7 @@ export function signOut(): void {
     localStorage.removeItem('prism_repo_id')
     localStorage.removeItem('prism_repo_label')
     localStorage.removeItem('prism_active_section')
+    localStorage.removeItem('prism_dashboard_route')
   } catch (err) {
     console.error('Failed to clear session', err)
   }

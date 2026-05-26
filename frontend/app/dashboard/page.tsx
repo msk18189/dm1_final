@@ -38,7 +38,7 @@ import {
   getMonthlyFlow, getThroughput, getAuthors, getPRRisk, getStaleAlerts,
   getSyncStatus,
 } from '@/lib/api'
-import { formatDurationDisplay, formatDurationFromDays } from '@/lib/format'
+import { formatDurationDisplay, formatDurationFromDays, formatTelemetry } from '@/lib/format'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
 import { getAuthUser, signOut, isAuthenticated } from '@/lib/auth'
 import {
@@ -49,7 +49,8 @@ import {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const SYNC_POLL_MS = 3000
-const SYNC_COMPLETE_STATUSES = ['COMPLETED', 'FAILED']
+const SYNC_MAX_POLLS = 120     // 120 × 3s = 6 min max before timeout
+const SYNC_COMPLETE_STATUSES = ['COMPLETED', 'FAILED', 'PARTIAL', 'RATE_LIMITED']
 
 const defaultFilters: DashboardFiltersState = {
   days: null, author: 'all', state: 'ALL',
@@ -58,9 +59,11 @@ const defaultFilters: DashboardFiltersState = {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface SyncStatusData {
-  sync_status: 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED'
+  sync_status: 'IDLE' | 'PENDING' | 'VERIFYING' | 'SYNCING' | 'COMPLETED' | 'FAILED' | 'PARTIAL' | 'RATE_LIMITED'
+  sync_mode?: 'full' | 'lightweight' | 'partial'
   sync_progress: string | null
   sync_duration: number | null
+  sync_started_at?: string | null
   initial_sync_completed: boolean
   last_synced_at: string | null
   last_successful_sync: string | null
@@ -75,10 +78,21 @@ interface SyncStatusData {
   rate_limit_remaining: number | null
   rate_limit_limit: number | null
   rate_limit_reset: string | null
+  expected_prs?: number
+  expected_issues?: number
+  expected_forks?: number
+  expected_workflows?: number
+  synced_prs?: number
+  synced_issues?: number
+  synced_forks?: number
+  synced_workflows?: number
 }
 
 function renderDuration(dur: { value: string | number; unit: string }): string {
-  return `${dur.value} ${dur.unit}`
+  if (typeof dur.value === 'string' && ['Limited', 'Unavailable', 'Partial', 'none'].includes(dur.value)) {
+    return dur.value;
+  }
+  return `${dur.value} ${dur.unit}`.trim()
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -141,9 +155,13 @@ export default function DashboardPage() {
 
   // ─── Sync polling ──────────────────────────────────────────────────────────
 
+  const pollCountRef = useRef<number>(0)
+
   const startPolling = useCallback((id: number) => {
     if (pollRef.current) clearInterval(pollRef.current)
+    pollCountRef.current = 0
     pollRef.current = setInterval(async () => {
+      pollCountRef.current += 1
       try {
         const status = await getSyncStatus(id)
         setSyncStatus(status as SyncStatusData)
@@ -151,10 +169,18 @@ export default function DashboardPage() {
           clearInterval(pollRef.current!)
           pollRef.current = null
           setIsSyncing(false)
-          // After completion, load PR data
-          if (status.sync_status === 'COMPLETED') {
+          // Load data for all terminal states except FAILED
+          if (status.sync_status !== 'FAILED') {
             loadPRData(id, defaultFilters)
           }
+        }
+        // Timeout: stop polling after max polls
+        if (pollCountRef.current >= SYNC_MAX_POLLS) {
+          clearInterval(pollRef.current!)
+          pollRef.current = null
+          setIsSyncing(false)
+          // Load whatever data is available
+          loadPRData(id, defaultFilters)
         }
       } catch (_) {}
     }, SYNC_POLL_MS)
@@ -205,14 +231,24 @@ export default function DashboardPage() {
           try {
             const status = await getSyncStatus(id)
             setSyncStatus(status as SyncStatusData)
-            if (status.sync_status === 'SYNCING') {
+            const st = status.sync_status
+            if (st === 'SYNCING' || st === 'PENDING' || st === 'VERIFYING') {
               setIsSyncing(true)
               startPolling(id)
-            } else if (status.sync_status === 'COMPLETED') {
+            } else if (st === 'COMPLETED' || st === 'PARTIAL' || st === 'RATE_LIMITED') {
               loadPRData(id, defaultFilters)
             }
+            // FAILED: just show the status panel, no data to load
           } catch (err) {
             console.error("Failed to restore repo sync status", err)
+            // Repo may have been deleted — clear stale state
+            localStorage.removeItem('prism_repo_id')
+            localStorage.removeItem('prism_repo_label')
+            localStorage.removeItem('prism_active_section')
+            localStorage.removeItem('prism_dashboard_route')
+            setRepoId(null)
+            setRepoLabel('')
+            router.replace('/analyze')
           } finally {
             setIsHydrated(true)
           }
@@ -385,7 +421,11 @@ export default function DashboardPage() {
     )
   }
 
-  const hasData = !!(repoId && syncStatus?.initial_sync_completed)
+  const hasData = !!(repoId && (
+    syncStatus?.initial_sync_completed ||
+    syncStatus?.sync_status === 'PARTIAL' ||
+    syncStatus?.sync_status === 'RATE_LIMITED'
+  ))
 
   return (
     <AppShell
@@ -436,13 +476,57 @@ export default function DashboardPage() {
             />
           )}
 
+          {/* VERIFYING banner */}
+          {syncStatus?.sync_status === 'VERIFYING' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-800 text-sm">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                <span>Verifying repository access and fetching metadata...</span>
+              </div>
+            </motion.div>
+          )}
+
           {/* Syncing banner */}
-          {isSyncing && (
+          {isSyncing && syncStatus?.sync_status === 'SYNCING' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
               className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-indigo-800 text-sm">
               <div className="flex items-center gap-2">
                 <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
                 <span>{syncStatus?.sync_progress || 'Ingesting repository data...'}</span>
+              </div>
+            </motion.div>
+          )}
+
+          {/* PARTIAL completion banner */}
+          {syncStatus?.sync_status === 'PARTIAL' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-800 text-sm">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>Sync completed with partial data. Some modules were skipped. Add a GitHub PAT for full analysis.</span>
+              </div>
+            </motion.div>
+          )}
+
+          {/* RATE_LIMITED banner */}
+          {syncStatus?.sync_status === 'RATE_LIMITED' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-sm">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>GitHub rate limit reached. Dashboard shows available data. Add a PAT for full analysis.</span>
+              </div>
+            </motion.div>
+          )}
+
+          {/* FAILED banner */}
+          {syncStatus?.sync_status === 'FAILED' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 text-sm">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>Sync failed: {syncStatus?.error_message || 'Unknown error'}. You can retry.</span>
               </div>
             </motion.div>
           )}
@@ -471,26 +555,27 @@ export default function DashboardPage() {
               contributorsPage={contributorsPage} onContributorsPage={setContributorsPage}
               prRiskPage={prRiskPage} onPRRiskPage={setPRRiskPage}
               staleAlertsPage={staleAlertsPage} onStaleAlertsPage={setStaleAlertsPage}
+              syncStatus={syncStatus}
             />
           )}
 
           {/* ISSUES */}
-          {activeSection === 'issues' && <IssuesPanel repoId={repoId} />}
+          {activeSection === 'issues' && <IssuesPanel repoId={repoId} syncStatus={syncStatus} />}
 
           {/* BRANCHES */}
           {activeSection === 'branches' && <BranchesPanel repoId={repoId} />}
 
           {/* CI/CD */}
-          {activeSection === 'cicd' && <CICDPanel repoId={repoId} />}
+          {activeSection === 'cicd' && <CICDPanel repoId={repoId} syncStatus={syncStatus} />}
 
           {/* FORKS */}
-          {activeSection === 'forks' && <ForksPanel repoId={repoId} />}
+          {activeSection === 'forks' && <ForksPanel repoId={repoId} syncStatus={syncStatus} />}
 
           {/* PROJECTS */}
-          {activeSection === 'projects' && <ProjectsPanel repoId={repoId} />}
+          {activeSection === 'projects' && <ProjectsPanel repoId={repoId} syncStatus={syncStatus} />}
 
           {/* DISCUSSIONS */}
-          {activeSection === 'discussions' && <DiscussionsPanel repoId={repoId} />}
+          {activeSection === 'discussions' && <DiscussionsPanel repoId={repoId} syncStatus={syncStatus} />}
 
           {/* REPO HEALTH */}
           {activeSection === 'repo_health' && <RepoHealthPanel repoId={repoId} repoLabel={repoLabel} />}
@@ -509,12 +594,12 @@ export default function DashboardPage() {
 
 function OverviewSection({ kpi, monthlyFlow, throughput, syncStatus, repoLabel, onNavigate }: any) {
   const cards = [
-    { label: 'Total PRs', value: kpi?.total_prs?.toLocaleString() ?? '—', icon: <FolderGit2 />, color: 'from-indigo-500 to-violet-600', onClick: () => onNavigate('pull_requests') },
+    { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs ? formatTelemetry(kpi.total_prs, 0) : '—'), icon: <FolderGit2 />, color: 'from-indigo-500 to-violet-600', onClick: () => onNavigate('pull_requests') },
     { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', icon: <GitMerge />, color: 'from-emerald-500 to-teal-600', onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', icon: <Clock />, color: 'from-amber-500 to-orange-600', onClick: () => onNavigate('pull_requests') },
-    { label: 'Total Issues', value: syncStatus?.total_issues?.toLocaleString() ?? '—', icon: <AlertCircle />, color: 'from-rose-500 to-pink-600', onClick: () => onNavigate('issues') },
+    { label: 'Total Issues', value: syncStatus ? formatTelemetry(syncStatus.synced_issues || syncStatus.total_issues, syncStatus.expected_issues) : '—', icon: <AlertCircle />, color: 'from-rose-500 to-pink-600', onClick: () => onNavigate('issues') },
     { label: 'Branches', value: syncStatus?.total_branches?.toLocaleString() ?? '—', icon: <Timer />, color: 'from-sky-500 to-cyan-600', onClick: () => onNavigate('branches') },
-    { label: 'CI/CD Runs', value: syncStatus?.total_workflow_runs?.toLocaleString() ?? '—', icon: <Zap />, color: 'from-violet-500 to-purple-600', onClick: () => onNavigate('cicd') },
+    { label: 'CI/CD Runs', value: syncStatus ? formatTelemetry(syncStatus.synced_workflows || syncStatus.total_workflow_runs, syncStatus.expected_workflows) : '—', icon: <Zap />, color: 'from-violet-500 to-purple-600', onClick: () => onNavigate('cicd') },
   ]
 
   return (
@@ -564,6 +649,7 @@ function PullRequestsSection({
   oldestPage, onOldestPage, slowestPage, onSlowestPage,
   contributorsPage, onContributorsPage, prRiskPage, onPRRiskPage,
   staleAlertsPage, onStaleAlertsPage,
+  syncStatus,
 }: any) {
   const [localFilters, setLocalFilters] = useState(filters)
 
@@ -589,7 +675,7 @@ function PullRequestsSection({
       {/* KPI Cards */}
       {kpi && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <KPICard icon={<FolderGit2 />} title="Total PRs" value={kpi.total_prs?.toLocaleString() ?? '—'} accent="teal" />
+          <KPICard icon={<FolderGit2 />} title="Total PRs" value={syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi.total_prs ? formatTelemetry(kpi.total_prs, 0) : '—')} accent="teal" />
           <KPICard icon={<GitMerge />} title="Merge Rate" value={`${kpi.merge_rate ?? 0}%`} accent="emerald" />
           <KPICard icon={<Clock />} title="Avg Cycle Time" value={formatDurationFromDays(kpi.avg_cycle_time).value} unit={formatDurationFromDays(kpi.avg_cycle_time).unit} accent="amber" />
           <KPICard icon={<Eye />} title="Avg Review Wait" value={formatDurationDisplay(kpi.avg_review_wait).value} unit={formatDurationDisplay(kpi.avg_review_wait).unit} accent="lime" />

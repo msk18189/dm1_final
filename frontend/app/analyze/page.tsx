@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { isAuthenticated, getAuthUser } from '@/lib/auth'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
-import { analyzeRepository, formatApiError } from '@/lib/api'
+import { analyzeRepository, formatApiError, getSyncStatus } from '@/lib/api'
 import { Loader2 } from 'lucide-react'
 import AppShell from '@/components/AppShell'
 import RepositoryInput from '@/components/RepositoryInput'
@@ -25,8 +25,20 @@ export default function AnalyzePage() {
 
     const savedRepoId = localStorage.getItem('prism_repo_id')
     if (savedRepoId) {
-      router.replace('/dashboard')
-      return
+      const id = parseInt(savedRepoId, 10)
+      if (!isNaN(id)) {
+        // Validate repo still exists before redirecting
+        getSyncStatus(id).then(() => {
+          router.replace('/dashboard')
+        }).catch(() => {
+          // Repo no longer exists — clear stale state
+          localStorage.removeItem('prism_repo_id')
+          localStorage.removeItem('prism_repo_label')
+          localStorage.removeItem('prism_active_section')
+          localStorage.removeItem('prism_dashboard_route')
+        })
+        return
+      }
     }
 
     // Set token on client side

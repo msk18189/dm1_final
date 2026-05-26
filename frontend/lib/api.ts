@@ -5,7 +5,7 @@ import { getAuthToken } from './auth'
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -97,8 +97,10 @@ export const getSyncStatus = async (repoId: number) => {
   const response = await api.get(`/api/sync-status/${repoId}`)
   return response.data as {
     id: number; owner: string; name: string; full_name: string
-    sync_status: 'IDLE' | 'SYNCING' | 'COMPLETED' | 'FAILED'
+    sync_status: 'IDLE' | 'PENDING' | 'VERIFYING' | 'SYNCING' | 'COMPLETED' | 'FAILED' | 'PARTIAL' | 'RATE_LIMITED'
+    sync_mode?: 'full' | 'lightweight' | 'partial'
     sync_progress: string | null; sync_duration: number | null
+    sync_started_at?: string | null
     initial_sync_completed: boolean
     last_synced_at: string | null; last_successful_sync: string | null
     error_message: string | null
@@ -106,6 +108,8 @@ export const getSyncStatus = async (repoId: number) => {
     total_forks: number; total_workflow_runs: number; total_discussions: number
     total_projects: number
     rate_limit_remaining: number | null; rate_limit_limit: number | null; rate_limit_reset: string | null
+    expected_prs?: number; expected_issues?: number; expected_forks?: number; expected_workflows?: number
+    synced_prs?: number; synced_issues?: number; synced_forks?: number; synced_workflows?: number
   }
 }
 
@@ -116,6 +120,8 @@ export interface AnalyzedRepo {
   total_prs?: number; total_issues?: number; total_branches?: number
   total_forks?: number; total_workflow_runs?: number; total_discussions?: number
   total_projects?: number
+  expected_prs?: number; expected_issues?: number; expected_forks?: number; expected_workflows?: number
+  synced_prs?: number; synced_issues?: number; synced_forks?: number; synced_workflows?: number
 }
 
 export async function getRepositories(): Promise<AnalyzedRepo[]> {

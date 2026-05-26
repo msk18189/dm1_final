@@ -4,8 +4,9 @@ import { GitFork, Star, Clock, Activity, TrendingUp } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { getForksAnalytics, getForks } from '@/lib/api'
+import { formatTelemetry } from '@/lib/format'
 
-interface Props { repoId: number }
+interface Props { repoId: number; syncStatus?: any }
 
 function StatCard({ icon, label, value, sub, accent }: any) {
   return (
@@ -19,7 +20,7 @@ function StatCard({ icon, label, value, sub, accent }: any) {
   )
 }
 
-export default function ForksPanel({ repoId }: Props) {
+export default function ForksPanel({ repoId, syncStatus }: Props) {
   const [analytics, setAnalytics] = useState<any>(null)
   const [forks, setForks] = useState<any>(null)
   const [filter, setFilter] = useState('all')
@@ -47,7 +48,7 @@ export default function ForksPanel({ repoId }: Props) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard icon={<GitFork className="h-4 w-4 text-indigo-500" />} label="Total Forks" value={(summary?.total_forks ?? 0).toLocaleString()} accent="bg-indigo-50" />
+        <StatCard icon={<GitFork className="h-4 w-4 text-indigo-500" />} label="Total Forks" value={syncStatus ? formatTelemetry(syncStatus.synced_forks || syncStatus.total_forks, syncStatus.expected_forks) : (summary ? formatTelemetry(summary.synced_forks || summary.total_forks, summary.expected_forks) : '—')} accent="bg-indigo-50" />
         <StatCard icon={<Activity className="h-4 w-4 text-emerald-600" />} label="Active Forks" value={(summary?.active_forks ?? 0).toLocaleString()} sub="≤ 30 days" accent="bg-emerald-50" />
         <StatCard icon={<Clock className="h-4 w-4 text-rose-500" />} label="Stale Forks" value={(summary?.stale_forks ?? 0).toLocaleString()} sub="90+ days" accent="bg-rose-50" />
         <StatCard icon={<Star className="h-4 w-4 text-amber-600" />} label="Starred Forks" value={(summary?.starred_forks ?? 0).toLocaleString()} accent="bg-amber-50" />

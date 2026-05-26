@@ -187,3 +187,39 @@ body {
   0% { transform: translate(0, 0) scale(1.1); }
   100% { transform: translate(-60px, -20px) scale(0.95); }
 }
+
+/* Print Styles for PDF Export */
+@media print {
+  @page {
+    margin: 10mm;
+    size: auto;
+  }
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background-color: #faf6f0 !important;
+  }
+  .printable-report {
+    background-color: #faf6f0 !important;
+  }
+  .avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .avoid-break-before {
+    page-break-before: always;
+    break-before: always;
+  }
+  .report-page {
+    page-break-after: always;
+    break-after: always;
+  }
+  .report-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Hide any scrollbars and UI that shouldn't be printed */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+}

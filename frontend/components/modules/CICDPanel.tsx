@@ -4,8 +4,9 @@ import { Zap, CheckCircle2, XCircle, AlertTriangle, Clock, Activity } from 'luci
 import { motion } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts'
 import { getCICDAnalytics, getWorkflowRuns } from '@/lib/api'
+import { formatTelemetry } from '@/lib/format'
 
-interface Props { repoId: number }
+interface Props { repoId: number; syncStatus?: any }
 
 function StatCard({ icon, label, value, sub, accent }: any) {
   return (
@@ -27,7 +28,7 @@ const conclusionColors: Record<string, string> = {
   default: 'bg-indigo-100 text-indigo-800',
 }
 
-export default function CICDPanel({ repoId }: Props) {
+export default function CICDPanel({ repoId, syncStatus }: Props) {
   const [analytics, setAnalytics] = useState<any>(null)
   const [runs, setRuns] = useState<any>(null)
   const [page, setPage] = useState(1)
@@ -56,7 +57,7 @@ export default function CICDPanel({ repoId }: Props) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        <StatCard icon={<Zap className="h-4 w-4 text-indigo-500" />} label="Total Runs" value={(summary?.total_runs ?? 0).toLocaleString()} accent="bg-indigo-50" />
+        <StatCard icon={<Zap className="h-4 w-4 text-indigo-500" />} label="Total Runs" value={syncStatus ? formatTelemetry(syncStatus.synced_workflows || syncStatus.total_workflow_runs, syncStatus.expected_workflows) : (summary ? formatTelemetry(summary.synced_workflows || summary.total_runs, summary.expected_workflows) : '—')} accent="bg-indigo-50" />
         <StatCard icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} label="Successful" value={(summary?.successful_runs ?? 0).toLocaleString()} accent="bg-emerald-50" />
         <StatCard icon={<XCircle className="h-4 w-4 text-rose-500" />} label="Failed" value={(summary?.failed_runs ?? 0).toLocaleString()} accent="bg-rose-50" />
         <StatCard icon={<Activity className="h-4 w-4 text-violet-500" />} label="Success Rate" value={`${summary?.success_rate ?? 0}%`} accent="bg-violet-50" />

@@ -3,8 +3,9 @@ import { useState, useEffect } from 'react'
 import { MessageCircle, CheckCircle2, ThumbsUp, Users } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { getDiscussionsAnalytics, getDiscussions } from '@/lib/api'
+import { formatTelemetry } from '@/lib/format'
 
-interface Props { repoId: number }
+interface Props { repoId: number; syncStatus?: any }
 
 function StatCard({ icon, label, value, sub, accent }: any) {
   return (
@@ -18,7 +19,7 @@ function StatCard({ icon, label, value, sub, accent }: any) {
   )
 }
 
-export default function DiscussionsPanel({ repoId }: Props) {
+export default function DiscussionsPanel({ repoId, syncStatus }: Props) {
   const [summary, setSummary] = useState<any>(null)
   const [discussions, setDiscussions] = useState<any>(null)
   const [page, setPage] = useState(1)
@@ -48,7 +49,7 @@ export default function DiscussionsPanel({ repoId }: Props) {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard icon={<MessageCircle className="h-4 w-4 text-indigo-500" />} label="Total" value={(summary?.total_discussions ?? 0).toLocaleString()} accent="bg-indigo-50" />
+        <StatCard icon={<MessageCircle className="h-4 w-4 text-indigo-500" />} label="Total" value={syncStatus ? formatTelemetry(syncStatus.total_discussions, 0) : (summary ? formatTelemetry(summary.total_discussions, 0) : '—')} accent="bg-indigo-50" />
         <StatCard icon={<MessageCircle className="h-4 w-4 text-emerald-600" />} label="Open" value={(summary?.open_discussions ?? 0).toLocaleString()} accent="bg-emerald-50" />
         <StatCard icon={<CheckCircle2 className="h-4 w-4 text-violet-500" />} label="Answered" value={(summary?.answered_discussions ?? 0).toLocaleString()} accent="bg-violet-50" />
         <StatCard icon={<CheckCircle2 className="h-4 w-4 text-violet-500" />} label="Answer Rate" value={`${summary?.answer_rate ?? 0}%`} accent="bg-violet-50" />
