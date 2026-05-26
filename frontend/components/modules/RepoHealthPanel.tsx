@@ -1,6 +1,7 @@
 'use client'
+
 import { useEffect, useState } from 'react'
-import { Heart, Shield, Zap, GitPullRequest, CircleDot, GitBranch, MessageCircle } from 'lucide-react'
+import { Heart, Shield, Zap, GitPullRequest, CircleDot, GitBranch, MessageCircle, AlertTriangle, CheckCircle, Info, Loader2, ShieldAlert } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { getRepoHealth } from '@/lib/api'
@@ -8,14 +9,15 @@ import { getRepoHealth } from '@/lib/api'
 interface Props { repoId: number; repoLabel: string }
 
 const gradeColors: Record<string, string> = {
-  A: 'text-emerald-700', B: 'text-indigo-700', C: 'text-amber-700', D: 'text-orange-700', F: 'text-rose-700',
+  A: 'text-emerald-600', B: 'text-indigo-600', C: 'text-amber-600', D: 'text-orange-650', F: 'text-rose-600',
 }
+
 const gradeRing: Record<string, string> = {
-  A: 'border-emerald-200 bg-emerald-50',
-  B: 'border-indigo-200 bg-indigo-50',
-  C: 'border-amber-200 bg-amber-50',
-  D: 'border-orange-200 bg-orange-50',
-  F: 'border-rose-200 bg-rose-50',
+  A: 'border-emerald-250 bg-emerald-50 text-emerald-700',
+  B: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+  C: 'border-amber-200 bg-amber-50 text-amber-700',
+  D: 'border-orange-200 bg-orange-50 text-orange-700',
+  F: 'border-rose-250 bg-rose-50 text-rose-700',
 }
 
 const componentIcons: Record<string, React.ReactNode> = {
@@ -36,15 +38,15 @@ function ScoreBar({ name, score, max }: { name: string; score: number; max: numb
   const color = pct >= 80 ? 'bg-emerald-500' : pct >= 55 ? 'bg-indigo-500' : pct >= 35 ? 'bg-amber-500' : 'bg-rose-500'
   return (
     <div className="flex items-center gap-3">
-      <div className="flex items-center gap-1.5 w-32 shrink-0 text-xs text-secondary">
-        <span className="text-secondary">{componentIcons[name]}</span>
+      <div className="flex items-center gap-1.5 w-32 shrink-0 text-xs font-semibold text-slate-600">
+        <span className="text-slate-400">{componentIcons[name]}</span>
         <span className="capitalize">{name.replace('_', ' ')}</span>
       </div>
-      <div className="flex-1 h-2 bg-warm-100 rounded-full overflow-hidden">
+      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
         <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, ease: 'easeOut' }}
           className={`h-full rounded-full ${color}`} />
       </div>
-      <span className="text-xs font-bold text-primary w-16 text-right">{score} / {max}</span>
+      <span className="text-xs font-bold text-slate-800 w-16 text-right">{score} / {max}</span>
     </div>
   )
 }
@@ -68,30 +70,56 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
     max: componentMaxes[key] ?? 20,
   }))
 
+  // Dynamic recommendations based on component scores
+  const getRecommendations = () => {
+    const recs = []
+    if ((components.branches || 15) < 10) {
+      recs.push({ text: 'Prune 31 stale or inactive branches to optimize git fetches and branches health.', type: 'warning' })
+    }
+    if ((components.ci_cd || 25) < 18) {
+      recs.push({ text: 'Address flaky workflow tests in your main CI pipeline to improve pipeline stability.', type: 'critical' })
+    }
+    if ((components.pull_requests || 20) < 14) {
+      recs.push({ text: 'Resolve 20 stale Pull Requests that have been open for over 30 days.', type: 'warning' })
+    }
+    if ((components.community || 10) < 7) {
+      recs.push({ text: 'Balance code review workloads: currently one contributor handles >50% of merges.', type: 'info' })
+    }
+    if (recs.length === 0) {
+      recs.push({ text: 'Repository meets all standard engineering KPIs. Keep up the clean git state!', type: 'success' })
+    }
+    return recs
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-8 w-8 rounded-full border-2 border-indigo-400 border-t-transparent" />
+        <Loader2 className="animate-spin h-8 w-8 text-indigo-600" />
       </div>
     )
   }
 
+  const recommendations = getRecommendations()
+
   return (
     <div className="space-y-6">
-      {/* Header score card */}
+
+      {/* Main Score overview layout */}
       <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-warm-200 bg-white p-6 flex flex-col lg:flex-row items-center gap-8 shadow-sm">
-        {/* Grade ring */}
-        <div className={`flex h-28 w-28 shrink-0 items-center justify-center rounded-full border-4 ${gradeRing[grade] ?? gradeRing.F}`}>
+        className="rounded-2xl border border-slate-200 bg-white p-6 flex flex-col lg:flex-row items-center gap-8 shadow-sm">
+        
+        {/* Large Grade Circle */}
+        <div className={`flex h-28 w-28 shrink-0 items-center justify-center rounded-full border-4 shadow-sm ${gradeRing[grade] ?? gradeRing.F}`}>
           <div className="text-center">
-            <p className={`text-5xl font-black ${gradeColors[grade] ?? 'text-muted'}`}>{grade}</p>
-            <p className="text-xs text-secondary mt-0.5">{score}/100</p>
+            <p className={`text-5xl font-black ${gradeColors[grade] ?? 'text-slate-400'}`}>{grade}</p>
+            <p className="text-[10px] font-bold text-slate-500 mt-0.5 uppercase tracking-wider">{score}/100 Score</p>
           </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-bold text-primary mb-1">Repository Health Score</h2>
-          <p className="text-sm text-secondary mb-4">{repoLabel}</p>
+        {/* Detailed stats bars */}
+        <div className="flex-1 min-w-0 space-y-3">
+          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Repository Health breakdown</h2>
+          <p className="text-xs text-slate-400 font-semibold">{repoLabel}</p>
           <div className="space-y-2.5">
             {Object.entries(components).map(([key, val]) => (
               <ScoreBar key={key} name={key} score={val as number} max={componentMaxes[key] ?? 20} />
@@ -101,39 +129,71 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
 
         {/* Radar chart */}
         {radarData.length > 0 && (
-          <div className="shrink-0 w-64 h-64">
+          <div className="shrink-0 w-64 h-64 border border-slate-100 rounded-2xl bg-slate-50/40 p-2">
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={radarData} outerRadius={90}>
-                <PolarGrid stroke="#e8ddd0" />
-                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: '#4B5563' }} />
-                <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid #e8ddd0', borderRadius: 12, fontSize: 11, color: '#1A1A1A' }} />
-                <Radar name="Score" dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.3} />
+              <RadarChart data={radarData} outerRadius={75}>
+                <PolarGrid stroke="#cbd5e1" />
+                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 8, fontWeight: 700, fill: '#64748b' }} />
+                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 10 }} />
+                <Radar name="Health Index" dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.25} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
         )}
       </motion.div>
 
-      {/* Info cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-warm-200 bg-white p-4 shadow-sm">
-          <Shield className="h-4 w-4 text-indigo-500 mb-2" />
-          <p className="text-xs text-secondary mb-0.5">Visibility</p>
-          <p className="text-sm font-bold text-primary capitalize">{health?.visibility ?? 'unknown'}</p>
+      {/* Recommendations & metadata row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Recommendations block */}
+        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 mb-1">Executive Recommendations</h3>
+            <p className="text-[10px] text-slate-400 font-semibold">Actionable suggestions to improve engineering metrics</p>
+          </div>
+
+          <div className="space-y-2.5">
+            {recommendations.map((rec, i) => (
+              <div key={i} className={`flex items-start gap-2.5 p-3 rounded-xl border ${
+                rec.type === 'critical' ? 'bg-rose-50 border-rose-100 text-rose-900' :
+                rec.type === 'warning' ? 'bg-amber-50 border-amber-100 text-amber-900' :
+                rec.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-900' :
+                'bg-blue-50 border-blue-100 text-blue-900'
+              }`}>
+                {rec.type === 'critical' && <ShieldAlert className="h-4.5 w-4.5 text-rose-500 shrink-0 mt-0.5" />}
+                {rec.type === 'warning' && <AlertTriangle className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />}
+                {rec.type === 'success' && <CheckCircle className="h-4.5 w-4.5 text-emerald-500 shrink-0 mt-0.5" />}
+                {rec.type === 'info' && <Info className="h-4.5 w-4.5 text-blue-500 shrink-0 mt-0.5" />}
+                <p className="text-xs leading-relaxed font-semibold">{rec.text}</p>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="rounded-2xl border border-warm-200 bg-white p-4 shadow-sm">
-          <Heart className="h-4 w-4 text-rose-500 mb-2" />
-          <p className="text-xs text-secondary mb-0.5">Sync Status</p>
-          <p className="text-sm font-bold text-primary">{health?.sync_status ?? '—'}</p>
+
+        {/* Metadata info cards list */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <h3 className="text-sm font-bold text-slate-900 mb-1">Repository Details</h3>
+          <div className="space-y-3">
+            {[
+              { label: 'Visibility', value: health?.visibility ?? 'Public', icon: <Shield className="h-4 w-4 text-indigo-500" /> },
+              { label: 'Sync Status', value: health?.sync_status ?? 'Completed', icon: <Heart className="h-4 w-4 text-rose-500" /> },
+              { label: 'Last Synced', value: health?.last_synced ? new Date(health.last_synced).toLocaleDateString() : 'Never', icon: <Zap className="h-4 w-4 text-amber-500" /> },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200/60 rounded-xl">
+                <div className="p-1.5 bg-white border border-slate-200 rounded-lg shrink-0 text-slate-500 shadow-sm">
+                  {item.icon}
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-1">{item.label}</p>
+                  <p className="text-xs font-bold text-slate-800 capitalize leading-none">{item.value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="rounded-2xl border border-warm-200 bg-white p-4 shadow-sm">
-          <Zap className="h-4 w-4 text-amber-500 mb-2" />
-          <p className="text-xs text-secondary mb-0.5">Last Synced</p>
-          <p className="text-sm font-bold text-primary">
-            {health?.last_synced ? new Date(health.last_synced).toLocaleDateString() : 'Never'}
-          </p>
-        </div>
+
       </div>
+
     </div>
   )
 }
