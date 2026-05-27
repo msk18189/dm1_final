@@ -11,7 +11,7 @@ cycler==0.12.1
 defusedxml==0.7.1
 fastapi==0.104.1
 fonttools==4.63.0
-greenlet==3.5.1
+greenlet
 h11==0.16.0
 idna==3.15
 joblib==1.5.3
@@ -44,4 +44,4 @@ bcrypt>=4.0.0
 PyJWT>=2.8.0
 celery>=5.3.0
 redis>=5.0.0
-playwright==1.49.1
+playwright

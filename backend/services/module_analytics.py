@@ -176,6 +176,39 @@ class IssueAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
+    def get_heatmap(self, repo_id: int) -> List[int]:
+        now = _now_utc()
+        end_date = now
+        while end_date.weekday() != 5:
+            end_date += timedelta(days=1)
+            
+        start_date = end_date - timedelta(days=370)
+        
+        issues = self.db.query(Issue.created_at).filter(
+            Issue.repo_id == repo_id,
+            Issue.created_at >= start_date,
+            Issue.created_at <= end_date + timedelta(days=1)
+        ).all()
+        
+        from collections import defaultdict
+        daily_counts = defaultdict(int)
+        for (created_at,) in issues:
+            if created_at:
+                daily_counts[created_at.strftime("%Y-%m-%d")] += 1
+                
+        heatmap = []
+        for i in range(371):
+            d = start_date + timedelta(days=i)
+            count = daily_counts[d.strftime("%Y-%m-%d")]
+            if count == 0: level = 0
+            elif count <= 1: level = 1
+            elif count <= 3: level = 2
+            elif count <= 5: level = 3
+            else: level = 4
+            heatmap.append(level)
+            
+        return heatmap
+
 
 # ---------------------------------------------------------------------------
 # MODULE 3 — Branch Analytics

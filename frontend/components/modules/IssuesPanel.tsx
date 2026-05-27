@@ -161,13 +161,11 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
               {heatmapMonths.map(m => <span key={m}>{m}</span>)}
             </div>
             {/* Calendar grids */}
-            <div className="grid grid-cols-53 grid-rows-7 gap-1">
-              {Array.from({ length: 371 }).map((_, i) => {
-                // Generate a random shade of emerald / indigo
-                const levels = ['bg-slate-100', 'bg-emerald-100', 'bg-emerald-250', 'bg-emerald-400', 'bg-emerald-600']
-                const rand = Math.floor(Math.random() * 5)
+            <div className="grid grid-rows-7 gap-1 grid-flow-col" style={{ gridTemplateColumns: 'repeat(53, minmax(0, 1fr))' }}>
+              {(analytics?.heatmap || Array.from({ length: 371 }).fill(0)).map((level: any, i: number) => {
+                const levels = ['bg-slate-100', 'bg-emerald-200', 'bg-emerald-300', 'bg-emerald-500', 'bg-emerald-700']
                 return (
-                  <div key={i} className={`h-2 w-2 rounded-sm ${levels[rand]}`} />
+                  <div key={i} className={`h-2 w-2 rounded-sm ${levels[level] || 'bg-slate-100'}`} />
                 )
               })}
             </div>
@@ -176,10 +174,10 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
         <div className="flex items-center justify-end gap-1.5 mt-3 text-[10px] font-semibold text-slate-400">
           <span>Less</span>
           <div className="h-2 w-2 rounded-sm bg-slate-100" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-100" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-250" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-450" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-600" />
+          <div className="h-2 w-2 rounded-sm bg-emerald-200" />
+          <div className="h-2 w-2 rounded-sm bg-emerald-300" />
+          <div className="h-2 w-2 rounded-sm bg-emerald-500" />
+          <div className="h-2 w-2 rounded-sm bg-emerald-700" />
           <span>More</span>
         </div>
       </div>

@@ -505,6 +505,7 @@ def get_issues_analytics(repo_id: int, db: Session = Depends(get_db)):
     return {
         "summary": ia.get_summary(repo_id),
         "velocity": ia.get_resolution_velocity(repo_id),
+        "heatmap": ia.get_heatmap(repo_id),
     }
 
 

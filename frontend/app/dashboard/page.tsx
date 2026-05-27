@@ -611,8 +611,8 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
     { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs ? formatTelemetry(kpi.total_prs, 0) : '—'), sub: 'All time', icon: <FolderGit2 className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', sub: 'of closed PRs', icon: <GitMerge className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', sub: '↓ 12% vs prev 30 days', icon: <Clock className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_wait)) : '—', sub: '↑ 8% vs prev 30 days', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration)) : '—', sub: '↓ 5% vs prev 30 days', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_wait_for_review)) : '—', sub: '↑ 8% vs prev 30 days', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_review_duration)) : '—', sub: '↓ 5% vs prev 30 days', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Stale PRs', value: kpi?.stale_prs ?? 20, sub: '> 30 days old', icon: <AlertOctagon className="h-4 w-4 text-rose-500" />, onClick: () => onNavigate('pull_requests') },
   ]
 
@@ -1065,7 +1065,7 @@ function PullRequestsSection({
             onPageChange={onOldestPage}
             renderRow={(row: any) => (
               <>
-                <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.pr_number}</td>
+                <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.number || row.pr_number}</td>
                 <td className="px-4 py-2.5 text-slate-900 text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.author}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs font-bold">{row.age_days}d</td>
@@ -1084,7 +1084,7 @@ function PullRequestsSection({
             onPageChange={onSlowestPage}
             renderRow={(row: any) => (
               <>
-                <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.pr_number}</td>
+                <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.number || row.pr_number}</td>
                 <td className="px-4 py-2.5 text-slate-900 text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.author}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs font-bold">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
@@ -1109,7 +1109,7 @@ function PullRequestsSection({
               <td className="px-4 py-2.5 text-slate-650 text-xs">{row.total_prs}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs">{row.merged_prs}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
-              <td className="px-4 py-2.5 text-slate-650 text-xs font-semibold">{renderDuration(formatDurationDisplay(row.avg_review_time))}</td>
+              <td className="px-4 py-2.5 text-slate-650 text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_wait_for_review))}</td>
             </>
           )}
         />
