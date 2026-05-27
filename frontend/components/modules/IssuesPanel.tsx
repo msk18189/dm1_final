@@ -164,25 +164,11 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
               {heatmapMonths.map(m => <span key={m}>{m}</span>)}
             </div>
             {/* Calendar grids */}
-<<<<<<< HEAD
             <div className="grid grid-rows-7 gap-1 grid-flow-col" style={{ gridTemplateColumns: 'repeat(53, minmax(0, 1fr))' }}>
               {(analytics?.heatmap || Array.from({ length: 371 }).fill(0)).map((level: any, i: number) => {
                 const levels = ['bg-slate-100', 'bg-emerald-200', 'bg-emerald-300', 'bg-emerald-500', 'bg-emerald-700']
                 return (
                   <div key={i} className={`h-2 w-2 rounded-sm ${levels[level] || 'bg-slate-100'}`} />
-=======
-            <div className="grid grid-cols-53 grid-rows-7 grid-flow-col gap-1">
-              {heatmapData.map((day: any, i: number) => {
-                const count = day.count || 0
-                let colorClass = 'bg-slate-100 dark:bg-slate-800/40'
-                if (count > 0) colorClass = 'bg-emerald-300 dark:bg-emerald-800'
-                if (count > 2) colorClass = 'bg-emerald-400 dark:bg-emerald-600'
-                if (count > 5) colorClass = 'bg-emerald-600 dark:bg-emerald-500'
-                if (count > 10) colorClass = 'bg-emerald-800 dark:bg-emerald-400'
-                
-                return (
-                  <div key={i} title={day.date ? `${day.date}: ${count} issues` : ''} className={`h-2 w-2 rounded-sm ${colorClass}`} />
->>>>>>> 01a85de (New Chahges in ui)
                 )
               })}
             </div>
@@ -190,19 +176,11 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
         </div>
         <div className="flex items-center justify-end gap-1.5 mt-3 text-[10px] font-semibold text-muted">
           <span>Less</span>
-<<<<<<< HEAD
           <div className="h-2 w-2 rounded-sm bg-slate-100" />
           <div className="h-2 w-2 rounded-sm bg-emerald-200" />
           <div className="h-2 w-2 rounded-sm bg-emerald-300" />
           <div className="h-2 w-2 rounded-sm bg-emerald-500" />
           <div className="h-2 w-2 rounded-sm bg-emerald-700" />
-=======
-          <div className="h-2 w-2 rounded-sm bg-slate-100 dark:bg-slate-800/40" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-300 dark:bg-emerald-800" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-400 dark:bg-emerald-600" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-600 dark:bg-emerald-500" />
-          <div className="h-2 w-2 rounded-sm bg-emerald-800 dark:bg-emerald-400" />
->>>>>>> 01a85de (New Chahges in ui)
           <span>More</span>
         </div>
       </div>

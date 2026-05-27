@@ -197,7 +197,6 @@ class IssueAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
-<<<<<<< HEAD
     def get_heatmap(self, repo_id: int) -> List[int]:
         now = _now_utc()
         end_date = now
@@ -228,9 +227,8 @@ class IssueAnalytics:
             elif count <= 5: level = 3
             else: level = 4
             heatmap.append(level)
-            
         return heatmap
-=======
+        
     def get_priority_distribution(self, repo_id: int) -> List[Dict[str, Any]]:
         query = self.db.query(Issue.labels, Issue.comment_count, Issue.is_bug).filter(
             Issue.repo_id == repo_id,
@@ -292,8 +290,6 @@ class IssueAnalytics:
                 "count": daily[dstr]
             })
         return data
->>>>>>> 01a85de (New Chahges in ui)
-
 
 # ---------------------------------------------------------------------------
 # MODULE 3 — Branch Analytics
