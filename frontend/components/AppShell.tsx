@@ -22,7 +22,7 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { signOut } from '@/lib/auth'
 
 export type NavSection =
@@ -105,6 +105,7 @@ export default function AppShell({
   isSyncing,
 }: AppShellProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [isCollapsed, setIsCollapsed] = useState(false)
   // Track whether auth props have been resolved from parent
   const [authReady, setAuthReady] = useState(false)
@@ -120,6 +121,8 @@ export default function AppShell({
     signOut()
     router.replace('/login')
   }
+
+  const currentRepoId = searchParams.get('repoId') || (typeof window !== 'undefined' ? localStorage.getItem('prism_repo_id') : null)
 
   const NAV: NavItem[] = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4 shrink-0" />, requiresData: true },
@@ -157,8 +160,20 @@ export default function AppShell({
 
   const navigate = (id: NavSection) => {
     onNavigate?.(id)
-    const el = document.getElementById(`section-${id}`)
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (id === 'analyze') {
+      localStorage.removeItem('prism_repo_id')
+      localStorage.removeItem('prism_repo_label')
+      localStorage.removeItem('prism_active_section')
+      localStorage.removeItem('prism_dashboard_route')
+      router.push('/analyze')
+    } else {
+      const repoId = currentRepoId
+      if (repoId) {
+        router.push(`/dashboard?repoId=${repoId}&section=${id}`)
+      } else {
+        router.push(`/dashboard?section=${id}`)
+      }
+    }
   }
 
   const formatBadge = (n?: number | string | null): string | null => {
@@ -222,35 +237,45 @@ export default function AppShell({
   const activeNavItem = NAV.find(n => n.id === activeSection)
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 p-0 text-slate-600 dark:text-slate-350">
+    <div className="flex h-screen overflow-hidden bg-background p-0 text-secondary transition-colors duration-200">
 
       {/* ── Sidebar ── */}
       <aside
-        className={`hidden shrink-0 flex-col bg-white dark:bg-[#0b0f19] border-r border-slate-200 dark:border-slate-800 p-4 text-slate-600 dark:text-slate-400 transition-all duration-300 lg:flex ${isCollapsed ? 'w-[76px]' : 'w-[260px]'
+        className={`hidden shrink-0 flex-col bg-surface border-r border-border p-4 text-secondary transition-all duration-300 lg:flex ${isCollapsed ? 'w-[76px]' : 'w-[260px]'
           }`}
       >
         {/* Logo and toggle */}
         <div className="mb-6 flex items-center justify-between px-1">
           {!isCollapsed && (
-            <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => navigate('analyze')}
+              className="flex items-center gap-2.5 hover:opacity-85 transition text-left"
+              title="Analyze new repository"
+            >
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-sm text-white">
                 <GitBranch className="h-4.5 w-4.5" />
               </div>
               <div>
-                <span className="text-base font-bold tracking-tight text-slate-950 dark:text-white">PRISM</span>
-                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Engineering Intelligence</p>
+                <span className="text-base font-bold tracking-tight text-primary">PRISM</span>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-muted">Engineering Intelligence</p>
               </div>
-            </div>
+            </button>
           )}
           {isCollapsed && (
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-sm text-white mx-auto">
+            <button
+              type="button"
+              onClick={() => navigate('analyze')}
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-sm text-white mx-auto hover:opacity-85 transition"
+              title="Analyze new repository"
+            >
               <GitBranch className="h-4.5 w-4.5" />
-            </div>
+            </button>
           )}
           <button
             type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hidden lg:block"
+            className="p-1 rounded-lg hover:bg-bg-hover text-muted hover:text-primary hidden lg:block"
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
@@ -258,12 +283,22 @@ export default function AppShell({
 
         {/* Compact Repository selector */}
         {repoLabel && !isCollapsed && (
-          <div className="mb-4 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/80 px-3 py-2 flex items-center justify-between">
+          <div className="mb-4 rounded-xl bg-surface-soft border border-border px-3 py-2 flex items-center justify-between">
             <div className="min-w-0 flex-1">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Workspace</p>
-              <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200" title={repoLabel}>{repoLabel}</p>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-muted">Workspace</p>
+              <p className="truncate text-xs font-semibold text-primary" title={repoLabel}>{repoLabel}</p>
             </div>
-            <div className="h-2 w-2 rounded-full bg-emerald-500 shrink-0 ml-1.5 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+            <div className="flex items-center gap-1 shrink-0 ml-1.5">
+              <button
+                type="button"
+                onClick={() => navigate('analyze')}
+                className="p-1 rounded-lg hover:bg-surface border border-border text-muted hover:text-primary transition"
+                title="Analyze new repository"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+              <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+            </div>
           </div>
         )}
 
@@ -280,18 +315,18 @@ export default function AppShell({
                 onClick={() => navigate(item.id)}
                 className={`group flex items-center rounded-xl px-3 py-2.5 text-xs font-semibold transition-all relative ${active
                   ? 'bg-orange-50 dark:bg-orange-950/20 text-[#c2410c] dark:text-orange-400'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900/40 hover:text-slate-950 dark:hover:text-white'
+                  : 'text-secondary hover:bg-bg-hover hover:text-primary'
                   } ${isCollapsed ? 'justify-center' : 'gap-3'}`}
                 title={isCollapsed ? item.label : undefined}
               >
-                <span className={active ? 'text-[#c2410c] dark:text-orange-400' : 'text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-350'}>
+                <span className={active ? 'text-[#c2410c] dark:text-orange-400' : 'text-muted group-hover:text-secondary'}>
                   {item.icon}
                 </span>
                 {!isCollapsed && <span className="flex-1 text-left">{item.label}</span>}
                 {!isCollapsed && badge && (
                   <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${active
                     ? 'bg-orange-100 dark:bg-orange-950/40 text-[#c2410c] dark:text-orange-400'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    : 'bg-surface-soft text-muted'
                     }`}>
                     {badge}
                   </span>
@@ -304,9 +339,9 @@ export default function AppShell({
 
         {/* Floating Sync Status Card */}
         {!isCollapsed && syncStatus && (
-          <div className="mb-4 mt-4 rounded-xl border border-slate-200 dark:border-slate-800/80 bg-slate-50 dark:bg-slate-900/20 p-3 space-y-2">
+          <div className="mb-4 mt-4 rounded-xl border border-border bg-surface-soft p-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Sync Status</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-muted">Sync Status</span>
               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${syncStatus.sync_status === 'COMPLETED'
                 ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400'
                 : 'bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400'
@@ -314,10 +349,10 @@ export default function AppShell({
                 {syncStatus.sync_status === 'COMPLETED' ? 'Completed' : syncStatus.sync_status}
               </span>
             </div>
-            <div className="flex flex-col gap-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+            <div className="flex flex-col gap-0.5 text-[10px] text-secondary">
               <div className="flex justify-between">
                 <span>Last sync</span>
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                <span className="font-semibold text-primary">
                   {syncStatus.last_successful_sync
                     ? new Date(syncStatus.last_successful_sync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     : 'Never'}
@@ -325,7 +360,7 @@ export default function AppShell({
               </div>
               <div className="flex justify-between">
                 <span>Next Sync</span>
-                <span className="font-semibold text-slate-700 dark:text-slate-300">In 59 minutes</span>
+                <span className="font-semibold text-primary">In 59 minutes</span>
               </div>
             </div>
             {onSync && (
@@ -333,7 +368,7 @@ export default function AppShell({
                 type="button"
                 onClick={onSync}
                 disabled={isSyncing}
-                className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 py-1.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface py-1.5 text-[11px] font-semibold text-secondary hover:bg-bg-hover transition disabled:opacity-50"
               >
                 <RefreshCw className={`h-3 w-3 ${isSyncing ? 'animate-spin' : ''}`} />
                 Sync Now
@@ -344,18 +379,18 @@ export default function AppShell({
 
         {/* Sidebar Footer — User profile block (fully dynamic, no hardcoded fallbacks) */}
         <div
-          className={`mt-auto border-t border-slate-200 dark:border-slate-800 pt-3 flex items-center ${isCollapsed ? 'justify-center' : 'gap-2.5'} px-1`}
+          className={`mt-auto border-t border-border pt-3 flex items-center ${isCollapsed ? 'justify-center' : 'gap-2.5'} px-1`}
           role="region"
           aria-label="User profile"
         >
           {/* Loading skeleton — shown while auth data is resolving */}
           {!authReady && !displayName && (
             <>
-              <div className="h-8 w-8 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse" />
+              <div className="h-8 w-8 shrink-0 rounded-full bg-surface-soft animate-pulse" />
               {!isCollapsed && (
                 <div className="flex-1 min-w-0 space-y-1.5">
-                  <div className="h-2.5 w-24 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
-                  <div className="h-2 w-32 rounded bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                  <div className="h-2.5 w-24 rounded bg-surface-soft animate-pulse" />
+                  <div className="h-2 w-32 rounded bg-surface-soft animate-pulse" />
                 </div>
               )}
             </>
@@ -366,7 +401,7 @@ export default function AppShell({
             <>
               {/* Avatar circle with dynamic initials */}
               <div
-                className="h-8 w-8 shrink-0 rounded-full bg-[#fdf2ec] dark:bg-orange-950/20 text-[#c2410c] dark:text-orange-400 flex items-center justify-center font-bold text-xs border border-[#fce6d8] dark:border-orange-950/30 select-none"
+                className="h-8 w-8 shrink-0 rounded-full bg-orange-50 dark:bg-orange-950/25 text-[#c2410c] dark:text-orange-400 flex items-center justify-center font-bold text-xs border border-orange-200 dark:border-orange-900/20 select-none"
                 aria-hidden="true"
                 title={displayName ?? 'User'}
               >
@@ -377,17 +412,17 @@ export default function AppShell({
                 <div className="flex-1 min-w-0">
                   {displayName ? (
                     <p
-                      className="text-[11px] font-bold text-slate-900 dark:text-slate-100 truncate leading-tight"
+                      className="text-[11px] font-bold text-primary truncate leading-tight"
                       title={displayName}
                     >
                       {displayName}
                     </p>
                   ) : (
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">Loading…</p>
+                    <p className="text-[11px] text-muted italic">Loading…</p>
                   )}
                   {displayEmail ? (
                     <p
-                      className="text-[9px] text-slate-400 dark:text-slate-500 truncate mt-0.5 leading-tight"
+                      className="text-[9px] text-muted truncate mt-0.5 leading-tight"
                       title={displayEmail}
                     >
                       {displayEmail}
@@ -400,7 +435,7 @@ export default function AppShell({
                 <button
                   type="button"
                   onClick={handleSignOut}
-                  className="ml-auto text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 transition p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/20"
+                  className="ml-auto text-muted hover:text-rose-600 transition p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/20"
                   title="Sign Out"
                   aria-label="Sign out"
                 >
@@ -413,18 +448,18 @@ export default function AppShell({
       </aside>
 
       {/* ── Main Panel ── */}
-      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-[#080c14]">
+      <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
 
         {/* Sticky Top Navbar */}
-        <header className="flex items-center justify-between border-b border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-[#0b0f19] px-5 py-3 sticky top-0 z-10 shrink-0">
+        <header className="flex items-center justify-between border-b border-border bg-surface px-5 py-3 sticky top-0 z-10 shrink-0">
           <div className="flex items-center gap-3">
             {/* Repo selector and display */}
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-850 text-slate-600 dark:text-slate-400">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-soft text-secondary border border-border">
                 <GitBranch className="h-4 w-4" />
               </div>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{repoLabel || 'OpenBMB / MiniCPM-V'}</span>
-              <button type="button" className="text-slate-300 dark:text-slate-600 hover:text-amber-500 transition">
+              <span className="text-sm font-bold text-primary">{repoLabel || 'OpenBMB / MiniCPM-V'}</span>
+              <button type="button" className="text-muted hover:text-amber-500 transition">
                 <Star className="h-3.5 w-3.5 fill-current" />
               </button>
             </div>
@@ -438,24 +473,24 @@ export default function AppShell({
           <div className="flex items-center gap-3">
             {/* Search Input */}
             <div className="relative hidden md:block w-48 lg:w-60">
-              <Search className="absolute left-2.5 top-1.5 h-3.5 w-3.5 text-slate-400" />
+              <Search className="absolute left-2.5 top-1.5 h-3.5 w-3.5 text-muted" />
               <input
                 type="text"
                 placeholder="Search resources..."
-                className="w-full pl-8 pr-3 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:bg-white dark:focus:bg-[#0f1422] transition"
+                className="w-full pl-8 pr-3 py-1 rounded-lg border border-border bg-surface-soft text-xs text-primary placeholder-muted focus:outline-none focus:border-indigo-500 focus:bg-surface transition"
               />
             </div>
 
             {/* Date Range Picker */}
-            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-450 dark:border-slate-800 shadow-sm">
-              <Calendar className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-secondary shadow-sm">
+              <Calendar className="h-3.5 w-3.5 text-muted" />
               <span>Apr 26 - May 26, 2025</span>
             </div>
 
             {/* Bell/Notifications */}
             <button
               type="button"
-              className="rounded-lg p-1.5 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-500 dark:text-slate-400 transition"
+              className="rounded-lg p-1.5 border border-border hover:bg-bg-hover text-secondary transition"
               aria-label="Notifications"
             >
               <Bell className="h-4 w-4" />
@@ -471,7 +506,7 @@ export default function AppShell({
         </header>
 
         {/* Mobile Navigation bar */}
-        <nav className="flex gap-1.5 overflow-x-auto border-b border-slate-200 dark:border-slate-850 bg-white dark:bg-[#0b0f19] px-4 py-2 lg:hidden scrollbar-none">
+        <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-surface px-4 py-2 lg:hidden scrollbar-none">
           {NAV.map((item) => {
             const active = activeSection === item.id
             return (
@@ -480,8 +515,8 @@ export default function AppShell({
                 type="button"
                 onClick={() => navigate(item.id)}
                 className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all ${active
-                  ? 'bg-[#fdf2ec] dark:bg-orange-950/20 text-[#c2410c] dark:text-orange-400 border border-[#fce6d8] dark:border-orange-950/30'
-                  : 'bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'bg-orange-50 dark:bg-orange-950/20 text-[#c2410c] dark:text-orange-400 border border-orange-200 dark:border-orange-900/25'
+                  : 'bg-surface-soft border border-border text-secondary hover:bg-bg-hover'
                   }`}
               >
                 {item.icon}

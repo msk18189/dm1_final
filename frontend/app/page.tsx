@@ -22,10 +22,10 @@ export default function Home() {
   }, [router])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-warm-50">
+    <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="text-center space-y-3">
         <Loader2 className="h-8 w-8 animate-spin mx-auto text-palette-orange" />
-        <p className="text-xs font-bold uppercase tracking-wider text-warm-400">Loading PRISM...</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-muted">Loading PRISM...</p>
       </div>
     </div>
   )

@@ -127,7 +127,7 @@ class SyncEngine:
     LIGHTWEIGHT_MAX_ISSUES = 100
     LIGHTWEIGHT_MAX_FORKS = 50
 
-    def __init__(self, db: Session, repo: Repository, gql_client, rest_client):
+    def __init__(self, db: Session, repo: Repository, gql_client, rest_client, sync_mode: Optional[str] = None):
         self.db = db
         self.repo = repo
         self.gql = gql_client
@@ -136,7 +136,7 @@ class SyncEngine:
         self.repo_name = repo.name
         self.progress = SyncProgress(db, repo)
         self.batch_size = None
-        self.lightweight_mode = False
+        self.lightweight_mode = (sync_mode == "lightweight")
         self.budget_exhausted = False
 
     def run(self):
@@ -159,18 +159,18 @@ class SyncEngine:
                 estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
                 self.estimates = estimates
                 
-                # Check for lightweight anonymous mode
-                # If repository is public, no PAT is provided, and estimated requests exceed the safe limit (60)
                 has_token = bool(self.rest.token and self.rest.token.strip())
                 is_private = estimates.get("is_private", False)
                 estimated_reqs = estimates.get("estimated_requests_rest", 0)
+
+                if is_private and not has_token:
+                    raise Exception("Private repositories require a GitHub Personal Access Token.")
+                if not is_private and not has_token and estimated_reqs > 60 and not self.lightweight_mode:
+                    raise Exception("Repository requires a GitHub Personal Access Token for full analysis.")
                 
-                if not is_private and not has_token and estimated_reqs > 60:
-                    self.lightweight_mode = True
+                if self.lightweight_mode:
                     self.repo.sync_mode = "lightweight"
-                    print(f"[SyncEngine] SWITCHING TO LIGHTWEIGHT ANONYMOUS MODE (public repo, no PAT, estimated {estimated_reqs} requests > 60)")
                 else:
-                    self.lightweight_mode = False
                     self.repo.sync_mode = "full"
 
                 # Transition to SYNCING status
@@ -539,7 +539,7 @@ class SyncEngine:
         )
 
 
-def run_sync_in_background(repo_url: str, github_token: Optional[str] = None):
+def run_sync_in_background(repo_url: str, github_token: Optional[str] = None, sync_mode: Optional[str] = None):
     """
     Entry point for background thread execution.
     Creates its own DB session, runs the full sync engine, cleans up.
@@ -564,7 +564,7 @@ def run_sync_in_background(repo_url: str, github_token: Optional[str] = None):
         gql_client = GitHubClient(token=token)
         rest_client = GitHubRestClient(token=token)
 
-        engine = SyncEngine(db, repo, gql_client, rest_client)
+        engine = SyncEngine(db, repo, gql_client, rest_client, sync_mode=sync_mode)
         engine.run()
 
         # After sync: update contributor stats and total analysis

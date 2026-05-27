@@ -1,22 +1,22 @@
 'use client'
-
+ 
 import { useEffect, useState } from 'react'
 import { Heart, Shield, Zap, GitPullRequest, CircleDot, GitBranch, MessageCircle, AlertTriangle, CheckCircle, Info, Loader2, ShieldAlert } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { getRepoHealth } from '@/lib/api'
 import { useTheme } from '@/components/ThemeProvider'
-
+ 
 interface Props { repoId: number; repoLabel: string }
-
+ 
 const gradeColors: Record<string, string> = {
-  A: 'text-emerald-600 dark:text-emerald-400',
+  A: 'text-emerald-600 dark:text-emerald-450',
   B: 'text-indigo-650 dark:text-indigo-400',
   C: 'text-amber-600 dark:text-amber-400',
   D: 'text-orange-600 dark:text-orange-400',
   F: 'text-rose-600 dark:text-rose-455',
 }
-
+ 
 const gradeRing: Record<string, string> = {
   A: 'border-emerald-250 bg-emerald-50 text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-950/20 dark:text-emerald-450',
   B: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800/40 dark:bg-indigo-950/20 dark:text-indigo-450',
@@ -24,7 +24,7 @@ const gradeRing: Record<string, string> = {
   D: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-800/40 dark:bg-orange-950/20 dark:text-orange-450',
   F: 'border-rose-250 bg-rose-50 text-rose-700 dark:border-rose-800/40 dark:bg-rose-950/20 dark:text-rose-450',
 }
-
+ 
 const componentIcons: Record<string, React.ReactNode> = {
   pull_requests: <GitPullRequest className="h-3.5 w-3.5" />,
   ci_cd: <Zap className="h-3.5 w-3.5" />,
@@ -33,61 +33,61 @@ const componentIcons: Record<string, React.ReactNode> = {
   community: <MessageCircle className="h-3.5 w-3.5" />,
   visibility: <Shield className="h-3.5 w-3.5" />,
 }
-
+ 
 const componentMaxes: Record<string, number> = {
   pull_requests: 20, ci_cd: 25, branches: 15, issues: 20, community: 10, visibility: 10,
 }
-
+ 
 function ScoreBar({ name, score, max }: { name: string; score: number; max: number }) {
   const pct = max > 0 ? (score / max) * 100 : 0
   const color = pct >= 80 ? 'bg-emerald-500' : pct >= 55 ? 'bg-indigo-500' : pct >= 35 ? 'bg-amber-500' : 'bg-rose-500'
   return (
     <div className="flex items-center gap-3">
-      <div className="flex items-center gap-1.5 w-32 shrink-0 text-xs font-semibold text-slate-600 dark:text-slate-400">
-        <span className="text-slate-400 dark:text-slate-500">{componentIcons[name]}</span>
+      <div className="flex items-center gap-1.5 w-32 shrink-0 text-xs font-semibold text-secondary">
+        <span className="text-muted">{componentIcons[name]}</span>
         <span className="capitalize">{name.replace('_', ' ')}</span>
       </div>
-      <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+      <div className="flex-1 h-2 bg-background rounded-full overflow-hidden">
         <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, ease: 'easeOut' }}
           className={`h-full rounded-full ${color}`} />
       </div>
-      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 w-16 text-right">{score} / {max}</span>
+      <span className="text-xs font-bold text-primary w-16 text-right">{score} / {max}</span>
     </div>
   )
 }
-
+ 
 export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
   const [health, setHealth] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const { isDark } = useTheme()
-
+ 
   useEffect(() => {
     setLoading(true)
     getRepoHealth(repoId).then(setHealth).catch(console.error).finally(() => setLoading(false))
   }, [repoId])
-
+ 
   const grade = health?.grade ?? '—'
   const score = health?.score ?? 0
   const components = health?.components ?? {}
-
+ 
   const radarData = Object.entries(components).map(([key, val]) => ({
     subject: key.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
     score: val as number,
     max: componentMaxes[key] ?? 20,
   }))
-
+ 
   const getRecommendations = () => {
     const recs = []
-    if ((components.branches || 15) < 10) {
-      recs.push({ text: 'Prune 31 stale or inactive branches to optimize git fetches and branches health.', type: 'warning' })
+    if (components.branches !== undefined && components.branches < 10) {
+      recs.push({ text: 'Prune stale or inactive branches to optimize git fetches and branches health.', type: 'warning' })
     }
-    if ((components.ci_cd || 25) < 18) {
+    if (components.ci_cd !== undefined && components.ci_cd < 18) {
       recs.push({ text: 'Address flaky workflow tests in your main CI pipeline to improve pipeline stability.', type: 'critical' })
     }
-    if ((components.pull_requests || 20) < 14) {
-      recs.push({ text: 'Resolve 20 stale Pull Requests that have been open for over 30 days.', type: 'warning' })
+    if (components.pull_requests !== undefined && components.pull_requests < 14) {
+      recs.push({ text: 'Resolve stale Pull Requests that have been open for over 30 days.', type: 'warning' })
     }
-    if ((components.community || 10) < 7) {
+    if (components.community !== undefined && components.community < 7) {
       recs.push({ text: 'Balance code review workloads: currently one contributor handles >50% of merges.', type: 'info' })
     }
     if (recs.length === 0) {
@@ -95,51 +95,51 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
     }
     return recs
   }
-
+ 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin h-8 w-8 text-indigo-650" />
+        <Loader2 className="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" />
       </div>
     )
   }
-
+ 
   const recommendations = getRecommendations()
-
+ 
   // Theme-aware radar color configurations
-  const gridStroke = isDark ? 'rgba(255, 255, 255, 0.08)' : '#cbd5e1'
+  const gridStroke = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(100, 116, 139, 0.25)'
   const labelFill = isDark ? '#cbd5e1' : '#64748b'
   const radarFill = '#6366f1'
-
+ 
   return (
     <div className="space-y-6">
-
+ 
       {/* Main Score overview layout */}
       <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-6 flex flex-col lg:flex-row items-center gap-8 shadow-sm">
+        className="rounded-2xl border border-border bg-surface p-6 flex flex-col lg:flex-row items-center gap-8 shadow-sm">
         
         {/* Large Grade Circle */}
         <div className={`flex h-28 w-28 shrink-0 items-center justify-center rounded-full border-4 shadow-sm ${gradeRing[grade] ?? gradeRing.F}`}>
           <div className="text-center">
-            <p className={`text-5xl font-black ${gradeColors[grade] ?? 'text-slate-400'}`}>{grade}</p>
+            <p className={`text-5xl font-black ${gradeColors[grade] ?? 'text-muted'}`}>{grade}</p>
             <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-0.5 uppercase tracking-wider">{score}/100 Score</p>
           </div>
         </div>
-
+ 
         {/* Detailed stats bars */}
         <div className="flex-1 min-w-0 space-y-3">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">Repository Health breakdown</h2>
-          <p className="text-xs text-slate-400 dark:text-slate-400 font-semibold">{repoLabel}</p>
+          <h2 className="text-sm font-bold text-primary uppercase tracking-wider">Repository Health breakdown</h2>
+          <p className="text-xs text-muted font-semibold">{repoLabel}</p>
           <div className="space-y-2.5">
             {Object.entries(components).map(([key, val]) => (
               <ScoreBar key={key} name={key} score={val as number} max={componentMaxes[key] ?? 20} />
             ))}
           </div>
         </div>
-
+ 
         {/* Radar chart */}
         {radarData.length > 0 && (
-          <div className="shrink-0 w-64 h-64 border border-slate-100 dark:border-slate-800 rounded-2xl bg-slate-50/40 dark:bg-slate-900/10 p-2">
+          <div className="shrink-0 w-64 h-64 border border-border rounded-2xl bg-surface-soft/40 p-2">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData} outerRadius={75}>
                 <PolarGrid stroke={gridStroke} />
@@ -147,9 +147,9 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
                 <Tooltip 
                   contentStyle={{ 
                     borderRadius: 12, 
-                    border: `1px solid ${isDark ? '#1e293d' : '#e2e8f0'}`, 
-                    backgroundColor: isDark ? '#0f1422' : '#ffffff',
-                    color: isDark ? '#cbd5e1' : '#1e293b',
+                    border: '1px solid var(--border-primary)', 
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    color: 'var(--text-secondary)',
                     fontSize: 10 
                   }} 
                 />
@@ -159,17 +159,17 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
           </div>
         )}
       </motion.div>
-
+ 
       {/* Recommendations & metadata row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Recommendations block */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm space-y-4">
+        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">Executive Recommendations</h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-400 font-semibold">Actionable suggestions to improve engineering metrics</p>
+            <h3 className="text-sm font-bold text-primary mb-1">Executive Recommendations</h3>
+            <p className="text-[10px] text-muted font-semibold">Actionable suggestions to improve engineering metrics</p>
           </div>
-
+ 
           <div className="space-y-2.5">
             {recommendations.map((rec, i) => (
               <div key={i} className={`flex items-start gap-2.5 p-3 rounded-xl border ${
@@ -187,31 +187,31 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
             ))}
           </div>
         </div>
-
+ 
         {/* Metadata info cards list */}
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">Repository Details</h3>
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4">
+          <h3 className="text-sm font-bold text-primary mb-1">Repository Details</h3>
           <div className="space-y-3">
             {[
-              { label: 'Visibility', value: health?.visibility ?? 'Public', icon: <Shield className="h-4 w-4 text-indigo-500" /> },
-              { label: 'Sync Status', value: health?.sync_status ?? 'Completed', icon: <Heart className="h-4 w-4 text-rose-500" /> },
+              { label: 'Visibility', value: health?.visibility ?? '—', icon: <Shield className="h-4 w-4 text-indigo-500" /> },
+              { label: 'Sync Status', value: health?.sync_status ?? '—', icon: <Heart className="h-4 w-4 text-rose-500" /> },
               { label: 'Last Synced', value: health?.last_synced ? new Date(health.last_synced).toLocaleDateString() : 'Never', icon: <Zap className="h-4 w-4 text-amber-500" /> },
             ].map((item) => (
-              <div key={item.label} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-900/30 border border-slate-200/60 dark:border-slate-800/80 rounded-xl">
-                <div className="p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shrink-0 text-slate-500 dark:text-slate-400 shadow-sm">
+              <div key={item.label} className="flex items-center gap-3 p-3 bg-surface-soft dark:bg-slate-900/30 border border-border dark:border-slate-800/80 rounded-xl">
+                <div className="p-1.5 bg-surface dark:bg-slate-800 border border-border dark:border-slate-700 rounded-lg shrink-0 text-muted shadow-sm">
                   {item.icon}
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider leading-none mb-1">{item.label}</p>
-                  <p className="text-xs font-bold text-slate-800 dark:text-slate-200 capitalize leading-none">{item.value}</p>
+                  <p className="text-[10px] font-bold text-muted uppercase tracking-wider leading-none mb-1">{item.label}</p>
+                  <p className="text-xs font-bold text-primary capitalize leading-none">{item.value}</p>
                 </div>
               </div>
             ))}
           </div>
         </div>
-
+ 
       </div>
-
+ 
     </div>
   )
 }

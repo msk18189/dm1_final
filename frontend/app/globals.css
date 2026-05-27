@@ -4,6 +4,12 @@
 
 :root {
   --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-surface-soft: #f1f5f9;
+  --bg-hover: #f1f5f9;
+  --border-primary: rgba(226, 232, 240, 0.8);
+  --border-muted: #f1f5f9;
   --text-heading: #0f172a;
   --text-body: #334155;
   --text-muted: #64748b;
@@ -14,6 +20,12 @@
 
 .dark {
   --bg-base: #080c14;
+  --bg-surface: #0f1422;
+  --bg-surface-elevated: #161e31;
+  --bg-surface-soft: #121b2d;
+  --bg-hover: #1e293b;
+  --border-primary: #1e293b;
+  --border-muted: #111827;
   --text-heading: #f8fafc;
   --text-body: #cbd5e1;
   --text-muted: #94a3b8;
@@ -49,67 +61,49 @@ body {
 
 /* ─── Typography Hierarchy ───────────────────────────────────────────────── */
 .text-heading {
-  @apply font-bold text-slate-900 tracking-tight;
-}
-.dark .text-heading {
-  @apply text-slate-100;
+  color: var(--text-heading);
+  @apply font-bold tracking-tight;
 }
 
 .text-body {
-  @apply text-slate-700 font-medium;
-}
-.dark .text-body {
-  @apply text-slate-300;
+  color: var(--text-body);
+  @apply font-medium;
 }
 
 .text-muted {
-  @apply text-slate-500 font-medium;
-}
-.dark .text-muted {
-  @apply text-slate-400;
+  color: var(--text-muted);
+  @apply font-medium;
 }
 
 .page-heading {
-  @apply text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl;
-}
-.dark .page-heading {
-  @apply text-slate-50;
+  @apply text-2xl font-extrabold tracking-tight text-primary sm:text-3xl;
 }
 
 .page-subheading {
-  @apply mt-1 text-sm text-slate-500 font-medium;
-}
-.dark .page-subheading {
-  @apply text-slate-400;
+  @apply mt-1 text-sm text-muted font-medium;
 }
 
 .section-title {
-  @apply text-base font-bold tracking-tight text-slate-900;
-}
-.dark .section-title {
-  @apply text-slate-100;
+  @apply text-base font-bold tracking-tight text-primary;
 }
 
 .section-subtitle {
-  @apply mt-0.5 text-xs text-slate-500 font-semibold;
-}
-.dark .section-subtitle {
-  @apply text-slate-400;
+  @apply mt-0.5 text-xs text-muted font-semibold;
 }
 
 /* ─── Card Design System ─────────────────────────────────────────────────── */
 .card {
-  @apply rounded-card border border-slate-200/80 bg-white p-6 shadow-card transition-all duration-200;
+  @apply rounded-card border border-border bg-surface p-6 shadow-card transition-all duration-200;
 }
 .dark .card {
-  @apply border-slate-800 bg-[#0f1422] shadow-[0_1px_3px_rgba(0,0,0,0.3)];
+  @apply border-border bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.3)];
 }
 
 .card-hover {
-  @apply hover:border-slate-300 hover:shadow-md hover:-translate-y-[1px];
+  @apply hover:border-border hover:shadow-md hover:-translate-y-[1px];
 }
 .dark .card-hover {
-  @apply hover:border-slate-700 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] hover:-translate-y-[1px];
+  @apply hover:border-border hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] hover:-translate-y-[1px];
 }
 
 .card-glow {

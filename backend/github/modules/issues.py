@@ -32,13 +32,10 @@ def sync_issues(
     Correctly filters pull requests from the /issues endpoint.
     Returns total records synced (new + updated).
     """
-    from datetime import timedelta
     since_iso = None
-    since_cutoff = None
     if since:
         since_ts = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
         since_iso = since_ts.isoformat().replace("+00:00", "Z")
-        since_cutoff = since_ts - timedelta(days=1)
         print(f"[Telemetry][Issues] Ingestion Mode: Incremental. Filtering since: {since_iso}")
     else:
         print(f"[Telemetry][Issues] Ingestion Mode: Full sync mode for {owner}/{repo_name}")
@@ -53,7 +50,7 @@ def sync_issues(
     page_num = 0
     fetched_numbers = set()
 
-    stop_incremental = False
+    fetched_numbers = set()
     
     # Initialize synced count from database count
     repo.synced_issues = db.query(Issue).filter(Issue.repo_id == repo.id).count()
@@ -73,17 +70,6 @@ def sync_issues(
             updated_at = _parse_dt(issue.get("updated_at"))
             if updated_at and updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
-
-            # Fix incremental sync cutoff logic
-            if since_cutoff and updated_at and updated_at < since_cutoff:
-                existing = db.query(Issue).filter(
-                    Issue.repo_id == repo.id,
-                    Issue.issue_number == issue.get("number")
-                ).first()
-                if existing:
-                    print(f"[Telemetry][Issues] Incremental cutoff reached at issue #{issue.get('number')}. Breaking.")
-                    stop_incremental = True
-                    break
 
             try:
                 if issue.get("number"):
@@ -120,9 +106,6 @@ def sync_issues(
             if len(batch_buffer) >= batch_size:
                 db.commit()
                 batch_buffer.clear()
-
-        if stop_incremental:
-            break
 
         if lightweight_mode:
             print(f"[Issues] Lightweight mode active: processed one page of issues. Breaking pagination.")

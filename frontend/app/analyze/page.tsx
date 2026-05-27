@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { isAuthenticated, getAuthUser } from '@/lib/auth'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
@@ -9,7 +9,7 @@ import { Loader2 } from 'lucide-react'
 import AppShell from '@/components/AppShell'
 import RepositoryInput from '@/components/RepositoryInput'
 
-export default function AnalyzePage() {
+function AnalyzeContent() {
   const router = useRouter()
   const [githubToken, setGithubToken] = useState<string>('')
   const [userName, setUserName] = useState<string | undefined>()
@@ -18,6 +18,9 @@ export default function AnalyzePage() {
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
 
+  const [activeRepoId, setActiveRepoId] = useState<number | null>(null)
+  const [activeRepoLabel, setActiveRepoLabel] = useState<string>('')
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.replace('/login')
@@ -25,20 +28,12 @@ export default function AnalyzePage() {
     }
 
     const savedRepoId = localStorage.getItem('prism_repo_id')
+    const savedRepoLabel = localStorage.getItem('prism_repo_label')
     if (savedRepoId) {
       const id = parseInt(savedRepoId, 10)
       if (!isNaN(id)) {
-        // Validate repo still exists before redirecting
-        getSyncStatus(id).then(() => {
-          router.replace('/dashboard')
-        }).catch(() => {
-          // Repo no longer exists — clear stale state
-          localStorage.removeItem('prism_repo_id')
-          localStorage.removeItem('prism_repo_label')
-          localStorage.removeItem('prism_active_section')
-          localStorage.removeItem('prism_dashboard_route')
-        })
-        return
+        setActiveRepoId(id)
+        if (savedRepoLabel) setActiveRepoLabel(savedRepoLabel)
       }
     }
 
@@ -60,11 +55,11 @@ export default function AnalyzePage() {
     loadUser()
   }, [router])
 
-  const handleAnalyze = useCallback(async (url: string, token?: string) => {
+  const handleAnalyze = useCallback(async (url: string, token?: string, syncMode?: string) => {
     setGlobalError(null)
     setIsSyncing(true)
     try {
-      const result = await analyzeRepository(url, token || githubToken || undefined)
+      const result = await analyzeRepository(url, token || githubToken || undefined, syncMode)
       const newRepoId: number = result.repo_id ?? result.id
       const label = result.owner && result.repo ? `${result.owner}/${result.repo}` : url
 
@@ -75,7 +70,7 @@ export default function AnalyzePage() {
       localStorage.setItem('prism_dashboard_route', '/dashboard')
 
       // Redirect to dashboard
-      router.push('/dashboard')
+      router.push(`/dashboard?repoId=${newRepoId}&section=overview`)
     } catch (err) {
       setIsSyncing(false)
       setGlobalError(formatApiError(err))
@@ -89,10 +84,10 @@ export default function AnalyzePage() {
 
   if (!isHydrated) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-warm-50">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center space-y-3">
           <Loader2 className="h-8 w-8 animate-spin mx-auto text-palette-orange" />
-          <p className="text-xs font-bold uppercase tracking-wider text-warm-400">Loading PRISM...</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-muted">Loading PRISM...</p>
         </div>
       </div>
     )
@@ -100,8 +95,8 @@ export default function AnalyzePage() {
 
   return (
     <AppShell
-      hasData={false}
-      repoLabel=""
+      hasData={!!activeRepoId}
+      repoLabel={activeRepoLabel}
       activeSection="analyze"
       userName={userName}
       userEmail={userEmail}
@@ -124,5 +119,20 @@ export default function AnalyzePage() {
         />
       </div>
     </AppShell>
+  )
+}
+
+export default function AnalyzePage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-palette-orange" />
+          <p className="text-xs font-bold uppercase tracking-wider text-muted">Loading PRISM...</p>
+        </div>
+      </div>
+    }>
+      <AnalyzeContent />
+    </Suspense>
   )
 }

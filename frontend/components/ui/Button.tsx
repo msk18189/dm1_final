@@ -20,11 +20,11 @@ export const Button: React.FC<ButtonProps> = ({
   if (variant === 'primary') {
     variantStyles = 'bg-palette-orange hover:bg-palette-orange-dark text-white shadow-[0_4px_12px_rgba(198,123,92,0.2)] hover:shadow-[0_6px_20px_rgba(198,123,92,0.3)] focus:ring-palette-orange/20'
   } else if (variant === 'secondary') {
-    variantStyles = 'border border-warm-200 bg-white text-midnight-900 hover:border-palette-emerald hover:bg-palette-emerald-light focus:ring-palette-emerald/20'
+    variantStyles = 'border border-border bg-surface text-primary hover:border-palette-emerald hover:bg-palette-emerald-light dark:hover:bg-emerald-950/20 dark:hover:text-emerald-400 focus:ring-palette-emerald/20'
   } else if (variant === 'outline') {
-    variantStyles = 'border border-warm-200 bg-transparent text-midnight-900 hover:bg-warm-50 focus:ring-warm-200'
+    variantStyles = 'border border-border bg-transparent text-primary hover:bg-bg-hover focus:ring-border'
   } else if (variant === 'ghost') {
-    variantStyles = 'text-midnight-300 hover:bg-warm-100 hover:text-midnight-50 focus:ring-warm-100'
+    variantStyles = 'text-secondary hover:bg-bg-hover hover:text-primary focus:ring-bg-hover'
   }
 
   return (

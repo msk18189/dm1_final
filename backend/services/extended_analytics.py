@@ -83,9 +83,14 @@ class ExtendedAnalytics:
 
         repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
 
+        # closed_not_merged_prs = PRs with state CLOSED (not merged)
+        closed_not_merged_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "CLOSED").scalar() or 0
+
         return {
             "total_prs": total_count,
             "open_prs": open_count,
+            "merged_prs": merged_count,
+            "closed_not_merged_prs": closed_not_merged_count,
             "stale_prs": stale_count,
             "avg_cycle_time": round(avg_cycle / 24, 2) if avg_cycle is not None else None,
             "median_cycle_time": round(median_cycle / 24, 1) if median_cycle is not None else None,

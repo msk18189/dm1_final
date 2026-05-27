@@ -50,8 +50,8 @@ export default function LoginForm() {
   return (
     <Card className="w-full max-w-[420px]">
       <div className="mb-6 text-center">
-        <h2 className="text-xl font-bold text-warm-900 tracking-tight">Welcome Back</h2>
-        <p className="text-xs text-warm-500 mt-1.5 leading-normal">
+        <h2 className="text-xl font-bold text-primary tracking-tight">Welcome Back</h2>
+        <p className="text-xs text-muted mt-1.5 leading-normal">
           Login to access engineering workflow intelligence.
         </p>
       </div>
@@ -81,7 +81,7 @@ export default function LoginForm() {
             required
             className="pl-10"
           />
-          <Mail className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <Mail className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <div className="relative">
@@ -95,7 +95,7 @@ export default function LoginForm() {
             required
             className="pl-10"
           />
-          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <Button type="submit" loading={loading} className="w-full mt-6">
@@ -103,7 +103,7 @@ export default function LoginForm() {
         </Button>
       </form>
 
-      <div className="mt-6 text-center text-xs text-warm-500">
+      <div className="mt-6 text-center text-xs text-muted">
         Don&apos;t have an account?{' '}
         <Link href="/signup" className="font-semibold text-palette-orange hover:text-palette-orange-dark">
           Create Account

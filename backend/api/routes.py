@@ -48,6 +48,7 @@ def normalize_telemetry_counts(synced: int, expected: int) -> tuple:
 class RepositoryRequest(BaseModel):
     url: str
     github_token: Optional[str] = None
+    sync_mode: Optional[str] = None
 
 
 class CompareRequest(BaseModel):
@@ -60,11 +61,11 @@ class CompareRequest(BaseModel):
 # Background sync (via SyncEngine)
 # ---------------------------------------------------------------------------
 
-def run_background_sync(repo_url: str, github_token: Optional[str]):
+def run_background_sync(repo_url: str, github_token: Optional[str], sync_mode: Optional[str] = None):
     """Launch SyncEngine in background thread."""
     try:
         from github.sync_engine import run_sync_in_background
-        run_sync_in_background(repo_url, github_token)
+        run_sync_in_background(repo_url, github_token, sync_mode=sync_mode)
     except Exception as e:
         print(f"[Routes] Background sync error for {repo_url}: {e}")
 
@@ -140,26 +141,56 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 @router.post("/api/verify-repo")
 def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
     """Verify repository accessibility and fetch basic metadata including API usage estimates."""
+    url = request.url.strip()
+    user_token = (request.github_token or "").strip() or None
+    token_source = "user" if user_token else "none"
+
+    from github.client import GitHubClient, GitHubRestClient
+    rest = GitHubRestClient(token=user_token)
+
     try:
-        url = request.url.strip()
         owner, repo_name = parse_github_repo_url(url)
-        user_token = (request.github_token or "").strip() or None
+    except Exception:
+        return {
+            "ok": False,
+            "status": "INVALID_PAT" if user_token else "PRIVATE_REPO_PAT_REQUIRED",
+            "detail": "Invalid GitHub repository URL format."
+        }
 
-        # Determine token source
-        token_source = "user" if user_token else "none"
+    try:
+        # Fetch metadata using REST client
+        meta = rest.get_repository_metadata(owner, repo_name)
+        if not meta:
+            if user_token:
+                return {
+                    "ok": False,
+                    "status": "INVALID_PAT",
+                    "detail": "GitHub token is invalid or expired."
+                }
+            else:
+                return {
+                    "ok": False,
+                    "status": "PRIVATE_REPO_PAT_REQUIRED",
+                    "detail": "Private repositories require a GitHub Personal Access Token."
+                }
 
-        from github.client import GitHubClient, GitHubRestClient
-        rest = GitHubRestClient(token=user_token)
+        is_private = meta.get("private", False)
         
-        # Get estimates and basic metadata via REST
-        estimates = rest.get_repository_estimates(owner, repo_name)
-        
+        # Private check
+        if is_private and not user_token:
+            return {
+                "ok": False,
+                "status": "PRIVATE_REPO_PAT_REQUIRED",
+                "detail": "Private repositories require a GitHub Personal Access Token.",
+                "owner": owner,
+                "repo": repo_name,
+                "is_private": True
+            }
+
         discussions_enabled = False
         discussions_total = 0
         projects_total = 0
         scope_info = {"scopes": [], "has_project_scope": False}
-        
-        # If token is provided, run GraphQL feature probe and scopes
         if user_token:
             try:
                 gql_client = GitHubClient(token=user_token)
@@ -171,17 +202,31 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
             except Exception as e:
                 print(f"[Verify] GraphQL probe failed: {e}")
 
-        canonical_url = normalize_github_url(estimates["owner"], estimates["repo"])
-
-        # Decide which estimate to report as 'estimated_requests'
+        # Get estimates and basic metadata via REST
+        estimates = rest.get_repository_estimates(owner, repo_name)
         chosen_estimate = estimates["estimated_requests_pat"] if user_token else estimates["estimated_requests_rest"]
         above_limit = chosen_estimate > 60
 
+        canonical_url = normalize_github_url(estimates["owner"], estimates["repo"])
+
+        if is_private:
+            status = "VERIFIED_PAT"
+        else:
+            if above_limit and not user_token:
+                status = "LARGE_REPO_PAT_REQUIRED"
+            elif user_token:
+                status = "VERIFIED_PAT"
+            else:
+                status = "VERIFIED_ANONYMOUS"
+
+        ok = status in ("VERIFIED_PAT", "VERIFIED_ANONYMOUS")
+
         return {
-            "ok": True,
+            "ok": ok,
+            "status": status,
             "owner": estimates["owner"],
             "repo": estimates["repo"],
-            "is_private": estimates["is_private"],
+            "is_private": is_private,
             "url": canonical_url,
             "stars": estimates["stars"],
             "language": estimates["language"],
@@ -206,16 +251,56 @@ def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db))
             "estimated_requests_pat": estimates["estimated_requests_pat"],
             "above_limit": above_limit
         }
+
     except Exception as e:
         error_msg = str(e)
+        print(f"[Verify] Exception during repository verification: {error_msg}")
+        
         if "Bad credentials" in error_msg or "401" in error_msg:
-            raise HTTPException(status_code=400, detail="GitHub token is invalid or expired.")
-        elif "NOT_FOUND" in error_msg or "Could not resolve to a Repository" in error_msg or "404" in error_msg or "private" in error_msg.lower() or "forbidden" in error_msg.lower():
+            return {
+                "ok": False,
+                "status": "INVALID_PAT",
+                "detail": "GitHub token is invalid or expired."
+            }
+        elif "NOT_FOUND" in error_msg or "404" in error_msg or "private" in error_msg.lower() or "forbidden" in error_msg.lower():
             if user_token:
-                raise HTTPException(status_code=400, detail="Repository not found or PAT does not have access permissions. Verify PAT scopes.")
+                return {
+                    "ok": False,
+                    "status": "INVALID_PAT",
+                    "detail": "Repository not found or PAT does not have access permissions. Verify PAT scopes."
+                }
             else:
-                raise HTTPException(status_code=400, detail="Repository not found or is private (GitHub PAT required).")
-        raise HTTPException(status_code=400, detail=error_msg)
+                return {
+                    "ok": False,
+                    "status": "PRIVATE_REPO_PAT_REQUIRED",
+                    "detail": "Private repositories require a GitHub Personal Access Token."
+                }
+        elif "rate limit" in error_msg.lower() or "429" in error_msg:
+            if user_token:
+                return {
+                    "ok": False,
+                    "status": "INVALID_PAT",
+                    "detail": "GitHub token is invalid or expired."
+                }
+            else:
+                return {
+                    "ok": False,
+                    "status": "LARGE_REPO_PAT_REQUIRED",
+                    "detail": "Repository requires a GitHub Personal Access Token for full analysis."
+                }
+        else:
+            if user_token:
+                return {
+                    "ok": False,
+                    "status": "INVALID_PAT",
+                    "detail": "GitHub token is invalid or expired."
+                }
+            else:
+                return {
+                    "ok": False,
+                    "status": "PRIVATE_REPO_PAT_REQUIRED",
+                    "detail": "Private repositories require a GitHub Personal Access Token."
+                }
 
 
 @router.get("/api/repositories")
@@ -271,6 +356,7 @@ def analyze_repository(
         owner, repo_name = parse_github_repo_url(url)
         canonical_url = normalize_github_url(owner, repo_name)
         token = (request.github_token or "").strip() or None
+        sync_mode = (request.sync_mode or "").strip() or None
 
         # Extract authenticated user (optional)
         current_user = None
@@ -322,7 +408,7 @@ def analyze_repository(
 
         threading.Thread(
             target=run_background_sync,
-            args=(url, token),
+            args=(url, token, sync_mode),
             daemon=True
         ).start()
 
@@ -492,10 +578,13 @@ def get_stale_alerts(
 def get_issues(
     repo_id: int, page: int = 1, limit: int = 20,
     state: str = "all", label: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: str = "created_at",
+    sort_dir: str = "desc",
     db: Session = Depends(get_db),
 ):
     """Paginated issue list."""
-    return IssueAnalytics(db).get_issues_list(repo_id, state=state, page=page, limit=limit, label=label)
+    return IssueAnalytics(db).get_issues_list(repo_id, state=state, page=page, limit=limit, label=label, search=search, sort=sort, sort_dir=sort_dir)
 
 
 @router.get("/api/issues/analytics/{repo_id}")
@@ -505,16 +594,24 @@ def get_issues_analytics(repo_id: int, db: Session = Depends(get_db)):
     return {
         "summary": ia.get_summary(repo_id),
         "velocity": ia.get_resolution_velocity(repo_id),
+<<<<<<< HEAD
         "heatmap": ia.get_heatmap(repo_id),
+=======
+        "priority": ia.get_priority_distribution(repo_id),
+        "heatmap": ia.get_issue_heatmap(repo_id),
+>>>>>>> 01a85de (New Chahges in ui)
     }
 
 
 @router.get("/api/issues/stale/{repo_id}")
 def get_stale_issues(
     repo_id: int, stale_days: int = 30, page: int = 1, limit: int = 20,
+    search: Optional[str] = None,
+    sort: str = "created_at",
+    sort_dir: str = "asc",
     db: Session = Depends(get_db),
 ):
-    return IssueAnalytics(db).get_stale_issues(repo_id, stale_days=stale_days, page=page, limit=limit)
+    return IssueAnalytics(db).get_stale_issues(repo_id, stale_days=stale_days, page=page, limit=limit, search=search, sort=sort, sort_dir=sort_dir)
 
 
 # ---------------------------------------------------------------------------

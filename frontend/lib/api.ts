@@ -79,17 +79,36 @@ export function formatApiError(err: unknown): string {
 
 // ─── Repository Management ────────────────────────────────────────────────
 
-export const verifyRepositoryAccess = async (url: string, githubToken?: string) => {
-  const response = await api.post('/api/verify-repo', { url, github_token: githubToken || null })
-  return response.data as {
-    ok: boolean; owner: string; repo: string; is_private: boolean
-    url?: string; has_token: boolean; token_source: 'user' | 'env' | 'none'
-    stars?: number; language?: string; description?: string
-  }
+export interface VerifyRepoResponse {
+  ok: boolean
+  status: 'VERIFIED_ANONYMOUS' | 'LARGE_REPO_PAT_REQUIRED' | 'PRIVATE_REPO_PAT_REQUIRED' | 'INVALID_PAT' | 'VERIFIED_PAT'
+  owner?: string
+  repo?: string
+  is_private?: boolean
+  url?: string
+  has_token?: boolean
+  token_source?: 'user' | 'env' | 'none'
+  stars?: number
+  language?: string
+  description?: string
+  pr_count?: number
+  issues_count?: number
+  forks_count?: number
+  contributors_count?: number
+  workflows_count?: number
+  discussions_count?: number
+  estimated_requests?: number
+  above_limit?: boolean
+  detail?: string
 }
 
-export const analyzeRepository = async (url: string, githubToken?: string) => {
-  const response = await api.post('/api/analyze', { url, github_token: githubToken || null })
+export const verifyRepositoryAccess = async (url: string, githubToken?: string): Promise<VerifyRepoResponse> => {
+  const response = await api.post('/api/verify-repo', { url, github_token: githubToken || null })
+  return response.data
+}
+
+export const analyzeRepository = async (url: string, githubToken?: string, syncMode?: string) => {
+  const response = await api.post('/api/analyze', { url, github_token: githubToken || null, sync_mode: syncMode || null })
   return response.data
 }
 
@@ -178,8 +197,8 @@ export const getStaleAlerts = async (repoId: number, page = 1, limit = 10) => {
 
 // ─── Module 2: Issues ────────────────────────────────────────────────────
 
-export const getIssues = async (repoId: number, page = 1, limit = 20, state = 'all', label?: string) => {
-  const response = await api.get(`/api/issues/${repoId}`, { params: { page, limit, state, label } })
+export const getIssues = async (repoId: number, page = 1, limit = 20, state = 'all', label?: string, search?: string, sort = 'created_at', sortDir = 'desc') => {
+  const response = await api.get(`/api/issues/${repoId}`, { params: { page, limit, state, label, search, sort, sort_dir: sortDir } })
   return response.data
 }
 
@@ -188,8 +207,8 @@ export const getIssuesAnalytics = async (repoId: number) => {
   return response.data
 }
 
-export const getStaleIssues = async (repoId: number, stale_days = 30, page = 1, limit = 20) => {
-  const response = await api.get(`/api/issues/stale/${repoId}`, { params: { stale_days, page, limit } })
+export const getStaleIssues = async (repoId: number, stale_days = 30, page = 1, limit = 20, search?: string, sort = 'created_at', sortDir = 'asc') => {
+  const response = await api.get(`/api/issues/stale/${repoId}`, { params: { stale_days, page, limit, search, sort, sort_dir: sortDir } })
   return response.data
 }
 

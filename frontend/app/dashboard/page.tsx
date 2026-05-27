@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, Suspense } from 'react'
 import { motion } from 'framer-motion'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import dynamic from 'next/dynamic'
 
 import AppShell, { NavSection } from '@/components/AppShell'
@@ -105,8 +105,9 @@ function renderDuration(dur: { value: string | number; unit: string }): string {
   return `${dur.value} ${dur.unit}`.trim()
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   // Auth + Token
   const [githubToken, setGithubToken] = useState<string>(() => loadGithubToken())
   const [userName, setUserName] = useState<string | undefined>()
@@ -224,34 +225,78 @@ export default function DashboardPage() {
     }
   }, [])
 
+  const hasRestoredRef = useRef(false)
+
   // Hydration and state restoration on mount
   useEffect(() => {
+    if (hasRestoredRef.current) return
+    
     if (!isAuthenticated()) {
       router.replace('/login')
       return
     }
 
+    const urlRepoId = searchParams.get('repoId')
+    const urlSection = searchParams.get('section')
+
     const savedRepoId = localStorage.getItem('prism_repo_id')
     const savedRepoLabel = localStorage.getItem('prism_repo_label')
     const savedActiveSection = localStorage.getItem('prism_active_section')
 
-    if (savedRepoId) {
-      const id = parseInt(savedRepoId, 10)
-      if (!isNaN(id)) {
-        setRepoId(id)
-        if (savedRepoLabel) setRepoLabel(savedRepoLabel)
-        if (savedActiveSection) setActiveSection(savedActiveSection as NavSection)
+    const activeIdStr = urlRepoId || savedRepoId
+    const activeSectionStr = urlSection || savedActiveSection || 'overview'
 
+    if (activeIdStr) {
+      const id = parseInt(activeIdStr, 10)
+      if (!isNaN(id)) {
         const restoreRepo = async () => {
           try {
             const status = await getSyncStatus(id)
             setSyncStatus(status as SyncStatusData)
+            
+            setRepoId(id)
+            const label = savedRepoLabel || ''
+            setRepoLabel(label)
+            
+            const urlDays = searchParams.get('days')
+            const urlAuthor = searchParams.get('author')
+            const urlState = searchParams.get('state')
+            const urlStart = searchParams.get('startDate')
+            const urlEnd = searchParams.get('endDate')
+
+            const newParams = new URLSearchParams()
+            newParams.set('repoId', String(id))
+            newParams.set('section', activeSectionStr)
+            
+            if (urlDays) newParams.set('days', urlDays)
+            if (urlAuthor) newParams.set('author', urlAuthor)
+            if (urlState) newParams.set('state', urlState)
+            if (urlStart) newParams.set('startDate', urlStart)
+            if (urlEnd) newParams.set('endDate', urlEnd)
+
+            const targetUrl = `/dashboard?${newParams.toString()}`
+            if (window.location.search !== `?${newParams.toString()}`) {
+              router.replace(targetUrl)
+            }
+
+            localStorage.setItem('prism_repo_id', String(id))
+            if (label) localStorage.setItem('prism_repo_label', label)
+            localStorage.setItem('prism_active_section', activeSectionStr)
+
             const st = status.sync_status
             if (st === 'SYNCING' || st === 'PENDING' || st === 'VERIFYING') {
               setIsSyncing(true)
               startPolling(id)
-            } else if (st === 'COMPLETED' || st === 'PARTIAL' || st === 'RATE_LIMITED') {
-              loadPRData(id, defaultFilters)
+            } else {
+              const days = urlDays ? parseInt(urlDays, 10) : null
+              const parsedFilters = {
+                days: isNaN(days as number) ? null : days,
+                author: urlAuthor || 'all',
+                state: urlState || 'ALL',
+                startDate: urlStart || null,
+                endDate: urlEnd || null
+              }
+              loadPRData(id, parsedFilters)
             }
           } catch (err) {
             console.error("Failed to restore repo sync status", err)
@@ -264,18 +309,99 @@ export default function DashboardPage() {
             router.replace('/analyze')
           } finally {
             setIsHydrated(true)
+            hasRestoredRef.current = true
           }
         }
         restoreRepo()
       } else {
         router.replace('/analyze')
         setIsHydrated(true)
+        hasRestoredRef.current = true
       }
     } else {
       router.replace('/analyze')
       setIsHydrated(true)
+      hasRestoredRef.current = true
     }
-  }, [router, startPolling, loadPRData])
+  }, [router, searchParams, startPolling, loadPRData])
+
+  // Listen to URL search parameter changes
+  useEffect(() => {
+    if (!isHydrated) return
+
+    const urlRepoId = searchParams.get('repoId')
+    const urlSection = searchParams.get('section') as NavSection || 'overview'
+
+    if (urlRepoId) {
+      const id = parseInt(urlRepoId, 10)
+      if (!isNaN(id) && id !== repoId) {
+        setRepoId(id)
+        
+        getSyncStatus(id).then(status => {
+          setSyncStatus(status as SyncStatusData)
+          setRepoLabel(status.full_name || `${status.owner}/${status.name}`)
+          
+          if (['PENDING', 'VERIFYING', 'SYNCING'].includes(status.sync_status)) {
+            setIsSyncing(true)
+            startPolling(id)
+          } else {
+            setIsSyncing(false)
+            const urlDays = searchParams.get('days')
+            const urlAuthor = searchParams.get('author')
+            const urlState = searchParams.get('state')
+            const urlStart = searchParams.get('startDate')
+            const urlEnd = searchParams.get('endDate')
+            const days = urlDays ? parseInt(urlDays, 10) : null
+            const parsedFilters = {
+              days: isNaN(days as number) ? null : days,
+              author: urlAuthor || 'all',
+              state: urlState || 'ALL',
+              startDate: urlStart || null,
+              endDate: urlEnd || null
+            }
+            loadPRData(id, parsedFilters)
+          }
+        }).catch(err => {
+          console.error("Failed to fetch repo sync status on transition", err)
+        })
+      }
+    }
+    
+    if (urlSection && urlSection !== activeSection) {
+      setActiveSection(urlSection)
+      localStorage.setItem('prism_active_section', urlSection)
+    }
+  }, [searchParams, isHydrated, repoId, activeSection, loadPRData, startPolling])
+
+  // Synchronize filters state from URL parameters
+  useEffect(() => {
+    if (!isHydrated) return
+
+    const urlDays = searchParams.get('days')
+    const urlAuthor = searchParams.get('author')
+    const urlState = searchParams.get('state')
+    const urlStart = searchParams.get('startDate')
+    const urlEnd = searchParams.get('endDate')
+
+    const days = urlDays ? parseInt(urlDays, 10) : null
+    const parsedFilters: DashboardFiltersState = {
+      days: isNaN(days as number) ? null : days,
+      author: urlAuthor || 'all',
+      state: urlState || 'ALL',
+      startDate: urlStart || null,
+      endDate: urlEnd || null
+    }
+
+    if (
+      parsedFilters.days !== filters.days ||
+      parsedFilters.author !== filters.author ||
+      parsedFilters.state !== filters.state ||
+      parsedFilters.startDate !== filters.startDate ||
+      parsedFilters.endDate !== filters.endDate
+    ) {
+      setFilters(parsedFilters)
+    }
+  }, [searchParams, isHydrated, filters])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !isHydrated) return
@@ -297,26 +423,41 @@ export default function DashboardPage() {
     }
   }, [repoLabel, isHydrated])
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !isHydrated) return
-    if (activeSection) {
-      localStorage.setItem('prism_active_section', activeSection)
-    }
-  }, [activeSection, isHydrated])
+  const handleSectionChange = useCallback((section: NavSection) => {
+    const params = new URLSearchParams(window.location.search)
+    params.set('section', section)
+    router.push(`/dashboard?${params.toString()}`)
+  }, [router])
 
-  useEffect(() => {
-    if (activeSection === 'analyze') {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('prism_repo_id')
-        localStorage.removeItem('prism_repo_label')
-        localStorage.removeItem('prism_active_section')
-        localStorage.removeItem('prism_dashboard_route')
-      }
-      setRepoId(null)
-      setRepoLabel('')
-      router.push('/analyze')
+  const handleFiltersChange = useCallback((newFilters: DashboardFiltersState) => {
+    const params = new URLSearchParams(window.location.search)
+    if (newFilters.days !== null) {
+      params.set('days', String(newFilters.days))
+    } else {
+      params.delete('days')
     }
-  }, [activeSection, router])
+    if (newFilters.author && newFilters.author !== 'all') {
+      params.set('author', newFilters.author)
+    } else {
+      params.delete('author')
+    }
+    if (newFilters.state && newFilters.state !== 'ALL') {
+      params.set('state', newFilters.state)
+    } else {
+      params.delete('state')
+    }
+    if (newFilters.startDate) {
+      params.set('startDate', newFilters.startDate)
+    } else {
+      params.delete('startDate')
+    }
+    if (newFilters.endDate) {
+      params.set('endDate', newFilters.endDate)
+    } else {
+      params.delete('endDate')
+    }
+    router.push(`/dashboard?${params.toString()}`)
+  }, [router])
 
   const loadTableData = useCallback(async (
     id: number, f: DashboardFiltersState,
@@ -363,6 +504,9 @@ export default function DashboardPage() {
       setFilters(defaultFilters)
       setActiveSection('overview')
 
+      // Update URL to be in sync
+      router.push(`/dashboard?repoId=${newRepoId}&section=overview`)
+
       const initialStatus = await getSyncStatus(newRepoId)
       setSyncStatus(initialStatus as SyncStatusData)
       startPolling(newRepoId)
@@ -370,7 +514,7 @@ export default function DashboardPage() {
       setIsSyncing(false)
       setGlobalError(formatApiError(err))
     }
-  }, [githubToken, startPolling])
+  }, [githubToken, startPolling, router])
 
   const handleSync = useCallback(async () => {
     if (!repoId || !repoLabel) return
@@ -416,7 +560,7 @@ export default function DashboardPage() {
       hasData={hasData || !!(repoId)}
       repoLabel={repoLabel}
       activeSection={activeSection}
-      onNavigate={setActiveSection}
+      onNavigate={handleSectionChange}
       userName={userName}
       userEmail={userEmail}
       syncCounts={syncCounts}
@@ -529,7 +673,7 @@ export default function DashboardPage() {
           {activeSection === 'pull_requests' && (
             <PullRequestsSection
               repoId={repoId} kpi={kpi} filters={filters} authors={authors}
-              onFiltersChange={setFilters} loading={loadingPR} error={prError}
+              onFiltersChange={handleFiltersChange} loading={loadingPR} error={prError}
               oldestPRs={oldestPRs} slowestPRs={slowestPRs} contributors={contributors}
               monthlyFlow={monthlyFlow} throughput={throughput}
               prRisk={prRisk} staleAlerts={staleAlerts}
@@ -576,44 +720,90 @@ export default function DashboardPage() {
 // ─── Overview Section Redesign ───────────────────────────────────────────────
 
 function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, repoHealth, contributors }: any) {
-  // SVG Radial progress calculations
-  const score = repoHealth?.score ?? 78
+  // SVG Radial progress calculations — use real health score, null if not loaded
+  const score = repoHealth?.score ?? null
   const radius = 42
   const strokeWidth = 8
   const circumference = 2 * Math.PI * radius
-  const strokeDashoffset = circumference - (score / 100) * circumference
+  const strokeDashoffset = score !== null ? circumference - (score / 100) * circumference : circumference
 
-  // Breakdown metrics
-  const rawPRScore = repoHealth?.components?.pull_requests ?? 16
-  const rawCICDScore = repoHealth?.components?.ci_cd ?? 23
-  const rawBranchScore = repoHealth?.components?.branches ?? 12
-  const rawIssueScore = repoHealth?.components?.issues ?? 18
-  const rawCommScore = repoHealth?.components?.community ?? 8
+  // Breakdown metrics — only render if real health data is present
+  const rawPRScore = repoHealth?.components?.pull_requests ?? null
+  const rawCICDScore = repoHealth?.components?.ci_cd ?? null
+  const rawBranchScore = repoHealth?.components?.branches ?? null
+  const rawIssueScore = repoHealth?.components?.issues ?? null
+  const rawCommScore = repoHealth?.components?.community ?? null
 
   const healthMetrics = [
-    { label: 'Code Flow', score: Math.round((rawPRScore / 20) * 100), color: 'bg-emerald-500' },
-    { label: 'Review Health', score: Math.round((rawCommScore / 10) * 100), color: 'bg-amber-500' },
-    { label: 'Workflow Stability', score: Math.round((rawCICDScore / 25) * 100), color: 'bg-emerald-500' },
-    { label: 'Stale Risk', score: Math.round((rawBranchScore / 15) * 100), color: 'bg-amber-500' },
-    { label: 'Contributor Balance', score: Math.round((rawIssueScore / 20) * 100), color: 'bg-emerald-500' },
+    { label: 'Code Flow', score: rawPRScore !== null ? Math.round((rawPRScore / 20) * 100) : null, color: 'bg-emerald-500' },
+    { label: 'Review Health', score: rawCommScore !== null ? Math.round((rawCommScore / 10) * 100) : null, color: 'bg-amber-500' },
+    { label: 'Workflow Stability', score: rawCICDScore !== null ? Math.round((rawCICDScore / 25) * 100) : null, color: 'bg-emerald-500' },
+    { label: 'Stale Risk', score: rawBranchScore !== null ? Math.round((rawBranchScore / 15) * 100) : null, color: 'bg-amber-500' },
+    { label: 'Contributor Balance', score: rawIssueScore !== null ? Math.round((rawIssueScore / 20) * 100) : null, color: 'bg-emerald-500' },
   ]
 
-  // KPI Analytics strip
+  // Real-data KPI Analytics strip — computed from actual kpi and repoHealth telemetry
+  const realStaleCount = kpi?.stale_prs ?? null
+  const realMergeRate = kpi?.merge_rate ?? null
+  const realWaitDays = kpi?.avg_wait_for_review ?? null
+  const ciScore = rawCICDScore !== null ? Math.round((rawCICDScore / 25) * 100) : null
+
   const statusStrip = [
-    { title: 'Throughput', value: 'Improving', trend: '+18% vs last 30 days', icon: <ArrowUpRight className="h-4 w-4" />, style: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-    { title: 'Review Latency', value: 'High', trend: '+32% vs last 30 days', icon: <Flame className="h-4 w-4" />, style: 'bg-orange-50 text-orange-700 border-orange-200' },
-    { title: 'Stale PRs', value: 'Needs Attention', trend: '20 PRs > 30 days', icon: <AlertCircle className="h-4 w-4" />, style: 'bg-purple-50 text-purple-700 border-purple-200' },
-    { title: 'Workflow Stability', value: 'Stable', trend: '94.2% success rate', icon: <CheckCircle className="h-4 w-4" />, style: 'bg-blue-50 text-blue-700 border-blue-200' },
+    {
+      title: 'Merge Rate',
+      value: realMergeRate !== null ? `${realMergeRate}%` : '—',
+      trend: realMergeRate !== null ? (realMergeRate >= 75 ? 'Healthy' : 'Needs review') : 'No data yet',
+      icon: <GitMerge className="h-4 w-4" />,
+      style: realMergeRate !== null && realMergeRate >= 75
+        ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border-emerald-250 dark:border-emerald-900/30'
+        : 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-900/30'
+    },
+    {
+      title: 'Review Wait',
+      value: realWaitDays !== null ? renderDuration(formatDurationFromDays(realWaitDays)) : '—',
+      trend: realWaitDays !== null ? (realWaitDays <= 2 ? 'Within SLA' : 'Above SLA') : 'No data yet',
+      icon: <Eye className="h-4 w-4" />,
+      style: realWaitDays !== null && realWaitDays <= 2
+        ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border-emerald-250 dark:border-emerald-900/30'
+        : 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-900/30'
+    },
+    {
+      title: 'Stale PRs',
+      value: realStaleCount !== null ? `${realStaleCount}` : '—',
+      trend: realStaleCount !== null ? (realStaleCount === 0 ? 'None stale' : `${realStaleCount} > 30 days`) : 'No data yet',
+      icon: <AlertCircle className="h-4 w-4" />,
+      style: realStaleCount !== null && realStaleCount === 0
+        ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border-emerald-250 dark:border-emerald-900/30'
+        : 'bg-purple-50 dark:bg-purple-950/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-900/30'
+    },
+    {
+      title: 'CI/CD Health',
+      value: ciScore !== null ? `${ciScore}%` : '—',
+      trend: ciScore !== null ? (ciScore >= 80 ? 'Stable' : 'Needs attention') : 'No data yet',
+      icon: <CheckCircle className="h-4 w-4" />,
+      style: ciScore !== null && ciScore >= 80
+        ? 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-900/30'
+        : 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-900/30'
+    },
   ]
 
-  // Main 6 metrics grid
+  // Main 6 metrics grid — all values from real API data, no fake fallbacks
   const mainKPIs = [
+<<<<<<< HEAD
     { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs ? formatTelemetry(kpi.total_prs, 0) : '—'), sub: 'All time', icon: <FolderGit2 className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', sub: 'of closed PRs', icon: <GitMerge className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', sub: '↓ 12% vs prev 30 days', icon: <Clock className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_wait_for_review)) : '—', sub: '↑ 8% vs prev 30 days', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_review_duration)) : '—', sub: '↓ 5% vs prev 30 days', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
     { label: 'Stale PRs', value: kpi?.stale_prs ?? 20, sub: '> 30 days old', icon: <AlertOctagon className="h-4 w-4 text-rose-500" />, onClick: () => onNavigate('pull_requests') },
+=======
+    { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs != null ? formatTelemetry(kpi.total_prs, 0) : '—'), sub: 'All time', icon: <FolderGit2 className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? '—'}%` : '—', sub: 'of closed PRs', icon: <GitMerge className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', sub: 'Merged PRs', icon: <Clock className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review)) : '—', sub: 'Time to first review', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration_display, kpi.avg_review_duration)) : '—', sub: 'Active review time', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
+    { label: 'Stale PRs', value: kpi?.stale_prs ?? '—', sub: '> 30 days old', icon: <AlertOctagon className="h-4 w-4 text-rose-500" />, onClick: () => onNavigate('pull_requests') },
+>>>>>>> 01a85de (New Chahges in ui)
   ]
 
   // Contributor activity formatted
@@ -627,100 +817,118 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Executive Summary Hero Card */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 flex flex-col justify-between shadow-sm relative overflow-hidden">
-          <div className="absolute right-0 top-0 h-40 w-40 bg-gradient-to-bl from-indigo-50/40 to-transparent rounded-full blur-3xl pointer-events-none" />
+        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 flex flex-col justify-between shadow-sm relative overflow-hidden">
+          <div className="absolute right-0 top-0 h-40 w-40 bg-gradient-to-bl from-indigo-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-indigo-50 text-indigo-600">
+                <span className="p-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
                   <Sparkles className="h-4 w-4" />
                 </span>
-                <h3 className="text-sm font-bold text-slate-900">Executive Summary</h3>
+                <h3 className="text-sm font-bold text-primary">Executive Summary</h3>
               </div>
-              <button className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition">
+              <button className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 text-xs font-semibold rounded-lg transition">
                 <Sparkles className="h-3.5 w-3.5" />
                 AI Insights
               </button>
             </div>
             
-            <p className="text-slate-600 text-sm leading-relaxed max-w-2xl font-medium">
-              Engineering velocity is stable. Merge rate is healthy but review latency is higher than usual.{' '}
-              <span className="font-bold text-orange-600 underline decoration-wavy">20 stale PRs</span> need attention.
+            <p className="text-secondary text-sm leading-relaxed max-w-2xl font-medium">
+              {kpi ? (
+                <>
+                  Merge rate is{' '}
+                  <span className={`font-bold ${(kpi.merge_rate ?? 0) >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                    {kpi.merge_rate ?? '—'}%
+                  </span>
+                  {'. '}
+                  {kpi.stale_prs > 0 ? (
+                    <><span className="font-bold text-orange-600 dark:text-orange-400 underline decoration-wavy">{kpi.stale_prs} stale PR{kpi.stale_prs !== 1 ? 's' : ''}</span> need attention.</>
+                  ) : (
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">No stale PRs detected.</span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted italic">Sync repository to see executive insights.</span>
+              )}
             </p>
           </div>
 
           {/* Metric horizontal strip */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-slate-100 pt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-border pt-4">
             {statusStrip.map((item) => (
               <div key={item.title} className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">{item.title}</span>
+                <span className="text-[10px] font-bold text-muted uppercase tracking-wider block">{item.title}</span>
                 <div className="flex items-center gap-1.5">
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold border ${item.style}`}>
                     {item.icon}
                     {item.value}
                   </span>
                 </div>
-                <span className="text-[10px] text-slate-500 block">{item.trend}</span>
+                <span className="text-[10px] text-muted block">{item.trend}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Repository Health Score Radial Ring */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-slate-900">Repository Health Score</h3>
-            <button onClick={() => onNavigate('repo_health')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+            <h3 className="text-sm font-bold text-primary">Repository Health Score</h3>
+            <button onClick={() => onNavigate('repo_health')} className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">
               View details &rarr;
             </button>
           </div>
 
-          <div className="flex items-center gap-6">
-            {/* Radial score ring */}
-            <div className="relative flex items-center justify-center shrink-0">
-              <svg className="w-24 h-24 transform -rotate-90">
-                <circle
-                  cx="48"
-                  cy="48"
-                  r={radius}
-                  stroke="#f1f5f9"
-                  strokeWidth={strokeWidth}
-                  fill="transparent"
-                />
-                <circle
-                  cx="48"
-                  cy="48"
-                  r={radius}
-                  stroke="#10b981"
-                  strokeWidth={strokeWidth}
-                  fill="transparent"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  strokeLinecap="round"
-                  className="transition-all duration-800 ease-out"
-                />
-              </svg>
-              <div className="absolute text-center">
-                <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{score}</span>
-                <span className="text-[10px] text-slate-400 block font-semibold mt-[-2px]">/100</span>
+          {score === null ? (
+            <div className="flex items-center justify-center h-32 text-muted text-xs italic">Health score loading...</div>
+          ) : (
+            <div className="flex items-center gap-6">
+              {/* Radial score ring */}
+              <div className="relative flex items-center justify-center shrink-0">
+                <svg className="w-24 h-24 transform -rotate-90">
+                  <circle
+                    cx="48"
+                    cy="48"
+                    r={radius}
+                    stroke="var(--bg-surface-soft)"
+                    strokeWidth={strokeWidth}
+                    fill="transparent"
+                  />
+                  <circle
+                    cx="48"
+                    cy="48"
+                    r={radius}
+                    stroke="#10b981"
+                    strokeWidth={strokeWidth}
+                    fill="transparent"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={strokeDashoffset}
+                    strokeLinecap="round"
+                    className="transition-all duration-800 ease-out"
+                  />
+                </svg>
+                <div className="absolute text-center">
+                  <span className="text-3xl font-extrabold text-primary tracking-tight">{score}</span>
+                  <span className="text-[10px] text-muted block font-semibold mt-[-2px]">/100</span>
+                </div>
+              </div>
+
+              {/* Health component list — only rendered when real data is present */}
+              <div className="flex-1 space-y-2 min-w-0">
+                {healthMetrics.slice(0, 5).map((m) => (
+                  <div key={m.label} className="space-y-0.5">
+                    <div className="flex justify-between text-[10px] font-semibold text-secondary">
+                      <span className="truncate pr-1">{m.label}</span>
+                      <span className="text-primary font-bold">{m.score !== null ? `${m.score}/100` : '—'}</span>
+                    </div>
+                    <div className="h-1 bg-surface-soft rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${m.color}`} style={{ width: m.score !== null ? `${m.score}%` : '0%' }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-
-            {/* Health component list */}
-            <div className="flex-1 space-y-2 min-w-0">
-              {healthMetrics.slice(0, 5).map((m) => (
-                <div key={m.label} className="space-y-0.5">
-                  <div className="flex justify-between text-[10px] font-semibold text-slate-600">
-                    <span className="truncate pr-1">{m.label}</span>
-                    <span className="text-slate-900 font-bold">{m.score}/100</span>
-                  </div>
-                  <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${m.color}`} style={{ width: `${m.score}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -730,17 +938,17 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
           <button
             key={card.label}
             onClick={card.onClick}
-            className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:bg-slate-50 transition flex flex-col justify-between gap-3 group relative overflow-hidden"
+            className="rounded-2xl border border-border bg-surface p-4 text-left shadow-sm hover:bg-bg-hover transition flex flex-col justify-between gap-3 group relative overflow-hidden"
           >
             <div className="flex items-center justify-between w-full">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{card.label}</span>
-              <div className="p-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 group-hover:scale-105 transition">
+              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{card.label}</span>
+              <div className="p-1.5 rounded-lg bg-surface-soft border border-border text-muted group-hover:scale-105 transition">
                 {card.icon}
               </div>
             </div>
             <div className="space-y-0.5">
-              <p className="text-2xl font-black text-slate-900 tracking-tight leading-none">{card.value}</p>
-              <p className="text-[10px] font-semibold text-slate-500">{card.sub}</p>
+              <p className="text-2xl font-black text-primary tracking-tight leading-none">{card.value}</p>
+              <p className="text-[10px] font-semibold text-muted">{card.sub}</p>
             </div>
           </button>
         ))}
@@ -750,49 +958,52 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* PR Flow Chart (ComposedChart) */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4">
-            <h3 className="text-sm font-bold text-slate-900">PR Flow</h3>
-            <p className="text-[10px] text-slate-400 font-semibold">Created · Merged · Closed (not merged) · Open at month end</p>
+            <h3 className="text-sm font-bold text-primary">PR Flow</h3>
+            <p className="text-[10px] text-muted font-semibold">Created · Merged · Closed (not merged) · Open at month end</p>
           </div>
-          <ResponsiveContainer width="100%" height={260}>
-            <ComposedChart data={monthlyFlow} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 9, fontWeight: 600 }} axisLine={false} tickLine={false} />
-              <YAxis stroke="#94a3b8" tick={{ fontSize: 9, fontWeight: 600 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 11 }} />
-              <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: 10, fontWeight: 700 }} />
-              <Bar dataKey="created" name="Created" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="merged" name="Merged" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="closed" name="Closed (not merged)" fill="#94a3b8" radius={[4, 4, 0, 0]} />
-              <Line type="monotone" dataKey="open_at_month_end" name="Open" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} />
-            </ComposedChart>
-          </ResponsiveContainer>
+          {monthlyFlow && monthlyFlow.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={monthlyFlow} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
+                <XAxis dataKey="month" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)' }} />
+                <Bar dataKey="created" name="Created" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="merged" name="Merged" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="closed" name="Closed (not merged)" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[260px] text-muted text-sm italic">No PR flow data available yet</div>
+          )}
         </div>
 
         {/* Top Contributors & Review Turnaround vertical stack */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between gap-6">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between gap-6">
           
           {/* Top Contributors list */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Top Contributors</h3>
-              <button onClick={() => onNavigate('pull_requests')} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all</button>
+              <h3 className="text-sm font-bold text-primary">Top Contributors</h3>
+              <button onClick={() => onNavigate('pull_requests')} className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">View all</button>
             </div>
             <div className="space-y-3">
               {topContributors.map((c: any) => {
                 const ratio = Math.round(((c.total_prs || 0) / maxPRCount) * 100)
                 return (
                   <div key={c.username} className="flex items-center gap-3">
-                    <div className="h-6 w-6 rounded-full bg-[#fdf2ec] text-[#c2410c] flex items-center justify-center font-bold text-[10px] border border-[#fce6d8] shrink-0">
+                    <div className="h-6 w-6 rounded-full bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 flex items-center justify-center font-bold text-[10px] border border-orange-200 dark:border-orange-900/20 shrink-0">
                       {c.username.slice(0, 1).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex justify-between text-[11px] font-semibold text-slate-700">
+                      <div className="flex justify-between text-[11px] font-semibold text-secondary">
                         <span className="truncate pr-2">{c.username}</span>
-                        <span className="text-slate-900 font-bold">{c.opened_prs ?? c.total_prs} / {c.merged_prs}</span>
+                        <span className="text-primary font-bold">{c.opened_prs ?? c.total_prs} / {c.merged_prs}</span>
                       </div>
-                      <div className="h-1.5 bg-slate-50 border border-slate-100 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-surface-soft border border-border rounded-full overflow-hidden">
                         <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${ratio}%` }} />
                       </div>
                     </div>
@@ -800,47 +1011,67 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 )
               })}
               {!topContributors.length && (
-                <p className="text-xs text-slate-400 py-6 text-center">No contributor activity</p>
+                <p className="text-xs text-muted py-6 text-center">No contributor activity</p>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Needs Attention alerts center */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">Needs Attention</h3>
+      {/* Needs Attention alerts center — all values from real telemetry */}
+      <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+        <h3 className="text-xs font-bold text-primary uppercase tracking-wider mb-3">Needs Attention</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          
-          <div className="rounded-xl border border-rose-100 bg-rose-50/40 p-3 flex items-start gap-2.5 hover:bg-rose-50 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
+
+          {/* Real stale PR count from KPI */}
+          <div className="rounded-xl border border-rose-100 dark:border-rose-900/25 bg-rose-50/40 dark:bg-rose-950/15 p-3 flex items-start gap-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
             <AlertCircle className="h-4.5 w-4.5 text-rose-500 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-rose-900">20 Stale PRs</p>
-              <p className="text-[10px] text-rose-600">&gt; 30 days old</p>
+              <p className="text-xs font-bold text-rose-900 dark:text-rose-250">
+                {kpi?.stale_prs != null ? `${kpi.stale_prs} Stale PR${kpi.stale_prs !== 1 ? 's' : ''}` : 'Stale PRs'}
+              </p>
+              <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                {kpi?.stale_prs != null ? (kpi.stale_prs === 0 ? 'None stale' : '> 30 days old') : 'Loading...'}
+              </p>
             </div>
           </div>
 
-          <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-3 flex items-start gap-2.5 hover:bg-amber-50 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
+          {/* Open PRs awaiting any review — from real open_prs count */}
+          <div className="rounded-xl border border-amber-100 dark:border-amber-900/25 bg-amber-50/40 dark:bg-amber-950/15 p-3 flex items-start gap-2.5 hover:bg-amber-50 dark:hover:bg-amber-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
             <Clock className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-amber-900">7 PRs Awaiting Review</p>
-              <p className="text-[10px] text-amber-600">&gt; 7 days no review</p>
+              <p className="text-xs font-bold text-amber-900 dark:text-amber-250">
+                {kpi?.open_prs != null ? `${kpi.open_prs} Open PR${kpi.open_prs !== 1 ? 's' : ''}` : 'Open PRs'}
+              </p>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                {kpi?.open_prs != null ? `${kpi.open_prs} awaiting merge` : 'Loading...'}
+              </p>
             </div>
           </div>
 
-          <div className="rounded-xl border border-red-100 bg-red-50/40 p-3 flex items-start gap-2.5 hover:bg-red-50 transition cursor-pointer" onClick={() => onNavigate('cicd')}>
+          {/* CI/CD health from repo health score */}
+          <div className="rounded-xl border border-red-100 dark:border-red-900/25 bg-red-50/40 dark:bg-red-950/15 p-3 flex items-start gap-2.5 hover:bg-red-50 dark:hover:bg-red-950/25 transition cursor-pointer" onClick={() => onNavigate('cicd')}>
             <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-red-900">3 Failing Workflows</p>
-              <p className="text-[10px] text-red-600">High failure rate</p>
+              <p className="text-xs font-bold text-red-900 dark:text-red-250">CI/CD Health</p>
+              <p className="text-[10px] text-red-600 dark:text-red-400">
+                {repoHealth?.components?.ci_cd != null
+                  ? `${Math.round((repoHealth.components.ci_cd / 25) * 100)}% reliability`
+                  : 'View CI/CD panel'}
+              </p>
             </div>
           </div>
 
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 flex items-start gap-2.5 hover:bg-indigo-50 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
+          {/* Avg cycle time from KPI */}
+          <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/25 bg-indigo-50/40 dark:bg-indigo-950/15 p-3 flex items-start gap-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
             <Clock className="h-4.5 w-4.5 text-indigo-500 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-indigo-900">5 Long-Running PRs</p>
-              <p className="text-[10px] text-indigo-600">&gt; 30 days cycle time</p>
+              <p className="text-xs font-bold text-indigo-900 dark:text-indigo-250">Avg Cycle Time</p>
+              <p className="text-[10px] text-indigo-600 dark:text-indigo-400">
+                {kpi?.avg_cycle_time != null
+                  ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time))
+                  : 'Loading...'}
+              </p>
             </div>
           </div>
 
@@ -868,15 +1099,16 @@ function PullRequestsSection({
     setLocalFilters(filters)
   }, [filters])
 
-  // Pie chart variables
-  const openCount = kpi?.open_prs ?? 66
-  const mergedCount = kpi?.merged_prs ?? 42
-  const closedCount = kpi?.closed_prs ?? 8
+  // Pie chart variables — use real KPI fields, no fake fallbacks
+  const openCount = kpi?.open_prs ?? 0
+  const mergedCount = kpi?.merged_prs ?? 0
+  const closedCount = kpi?.closed_not_merged_prs ?? 0
+  const hasRealPieData = kpi != null && (openCount + mergedCount + closedCount) > 0
 
   const pieData = [
     { name: 'Open', value: openCount, color: '#f97316' },
     { name: 'Merged', value: mergedCount, color: '#10b981' },
-    { name: 'Closed', value: closedCount, color: '#64748b' },
+    { name: 'Closed (not merged)', value: closedCount, color: '#64748b' },
   ]
 
   // KPI Row
@@ -898,9 +1130,9 @@ function PullRequestsSection({
     { 
       title: 'Closed (not merged)', 
       value: closedCount, 
-      labelCls: 'text-slate-500/80 dark:text-slate-400/80', 
-      valueCls: 'text-slate-700 dark:text-slate-300', 
-      cardCls: 'bg-slate-50 dark:bg-slate-900/20 border-slate-100 dark:border-slate-800/80' 
+      labelCls: 'text-muted/80', 
+      valueCls: 'text-secondary font-bold', 
+      cardCls: 'bg-surface-soft border-border' 
     },
     { 
       title: 'Avg Cycle Time', 
@@ -911,14 +1143,14 @@ function PullRequestsSection({
     },
     { 
       title: 'Review Wait', 
-      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_wait)) : '—', 
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review)) : '—', 
       labelCls: 'text-orange-700/70 dark:text-orange-400/80', 
-      valueCls: 'text-orange-850 dark:text-orange-355', 
+      valueCls: 'text-orange-700 dark:text-orange-400', 
       cardCls: 'bg-[#fdf2ec] dark:bg-[#c2410c]/5 border-[#fce6d8] dark:border-orange-900/20' 
     },
     { 
       title: 'Review Duration', 
-      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration)) : '—', 
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration_display, kpi.avg_review_duration)) : '—', 
       labelCls: 'text-purple-600/70 dark:text-purple-400/80', 
       valueCls: 'text-purple-700 dark:text-purple-300', 
       cardCls: 'bg-purple-50 dark:bg-purple-950/10 border-purple-100 dark:border-purple-900/20' 
@@ -963,82 +1195,97 @@ function PullRequestsSection({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* PR Lifecycle Flow - Donut chart */}
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm flex flex-col justify-between">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">PR Status Distribution</h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">Total Lifecycle PRs: {kpi?.total_prs ?? 113}</p>
+            <h3 className="text-sm font-bold text-primary mb-1">PR Status Distribution</h3>
+            <p className="text-[10px] text-muted font-semibold">Total Lifecycle PRs: {kpi?.total_prs ?? '—'}</p>
           </div>
           
-          <div className="flex items-center justify-between gap-4 py-4">
-            <ResponsiveContainer width="45%" height={120}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={36}
-                  outerRadius={50}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
+          {hasRealPieData ? (
+            <div className="flex items-center justify-between gap-4 py-4">
+              <ResponsiveContainer width="45%" height={120}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={36}
+                    outerRadius={50}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
 
-            {/* Custom Legend */}
-            <div className="flex-1 space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400">
-              {pieData.map((item) => (
-                <div key={item.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                    <span>{item.name}</span>
+              {/* Custom Legend */}
+              <div className="flex-1 space-y-1.5 text-xs font-semibold text-secondary">
+                {pieData.map((item) => (
+                  <div key={item.name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                      <span>{item.name}</span>
+                    </div>
+                    <span className="font-bold text-primary">{item.value}</span>
                   </div>
-                  <span className="font-bold text-slate-900 dark:text-slate-100">{item.value}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center justify-center h-32 text-muted text-xs italic">No PR data available yet</div>
+          )}
         </div>
 
-        {/* Bottleneck analysis list */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm flex flex-col justify-between">
+        {/* Bottleneck analysis list — computed from real stale/open PR metrics */}
+        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">Bottleneck Analysis</h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">Flagging reviewer constraints and latency risks</p>
+            <h3 className="text-sm font-bold text-primary mb-1">Bottleneck Analysis</h3>
+            <p className="text-[10px] text-muted font-semibold">Flagging reviewer constraints and latency risks</p>
           </div>
 
           <div className="space-y-3 mt-4">
+            {/* Stale open PRs (no review in 30+ days) — from real stale_prs count */}
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-orange-50/50 dark:bg-orange-950/10 border border-orange-100 dark:border-orange-900/20">
               <div className="flex items-center gap-2">
                 <span className="p-1 rounded-lg bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400">
                   <UserCheck className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-orange-955 dark:text-orange-200">Waiting for review</span>
+                <span className="text-xs font-bold text-orange-900 dark:text-orange-200">Stale open PRs</span>
               </div>
-              <span className="text-xs font-black text-orange-700 dark:text-orange-400">27 PRs &gt; 7 days</span>
+              <span className="text-xs font-black text-orange-700 dark:text-orange-400">
+                {kpi?.stale_prs != null ? `${kpi.stale_prs} PR${kpi.stale_prs !== 1 ? 's' : ''} > 30 days` : '— (loading)'}
+              </span>
             </div>
 
+            {/* Total open PRs awaiting merge */}
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/10 border border-amber-100 dark:border-amber-900/20">
               <div className="flex items-center gap-2">
                 <span className="p-1 rounded-lg bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
                   <CheckCircle className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-amber-955 dark:text-amber-200">Waiting for approval</span>
+                <span className="text-xs font-bold text-amber-900 dark:text-amber-200">Open PRs awaiting merge</span>
               </div>
-              <span className="text-xs font-black text-amber-700 dark:text-amber-400">9 PRs &gt; 5 days</span>
+              <span className="text-xs font-black text-amber-700 dark:text-amber-400">
+                {kpi?.open_prs != null ? `${kpi.open_prs} open` : '— (loading)'}
+              </span>
             </div>
 
+            {/* Avg review wait from KPI */}
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-purple-50/50 dark:bg-purple-950/10 border border-purple-100 dark:border-purple-900/20">
               <div className="flex items-center gap-2">
                 <span className="p-1 rounded-lg bg-purple-100 dark:bg-purple-950/30 text-purple-700 dark:text-purple-400">
                   <Timer className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-purple-955 dark:text-purple-200">Long review duration</span>
+                <span className="text-xs font-bold text-purple-900 dark:text-purple-200">Avg review wait</span>
               </div>
-              <span className="text-xs font-black text-purple-700 dark:text-purple-400">12 PRs &gt; 3 days</span>
+              <span className="text-xs font-black text-purple-700 dark:text-purple-400">
+                {kpi?.avg_wait_for_review != null
+                  ? renderDuration(formatDurationFromDays(kpi.avg_wait_for_review))
+                  : '— (no review data)'}
+              </span>
             </div>
           </div>
         </div>
@@ -1065,11 +1312,19 @@ function PullRequestsSection({
             onPageChange={onOldestPage}
             renderRow={(row: any) => (
               <>
+<<<<<<< HEAD
                 <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.number || row.pr_number}</td>
                 <td className="px-4 py-2.5 text-slate-900 text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.author}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs font-bold">{row.age_days}d</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.review_count}</td>
+=======
+                <td className="px-4 py-2.5 font-mono text-muted text-xs">#{row.number}</td>
+                <td className="px-4 py-2.5 text-primary text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
+                <td className="px-4 py-2.5 text-secondary text-xs">{row.author}</td>
+                <td className="px-4 py-2.5 text-secondary text-xs font-bold">{row.age_days}d</td>
+                <td className="px-4 py-2.5 text-secondary text-xs">{row.review_count}</td>
+>>>>>>> 01a85de (New Chahges in ui)
               </>
             )}
           />
@@ -1084,11 +1339,19 @@ function PullRequestsSection({
             onPageChange={onSlowestPage}
             renderRow={(row: any) => (
               <>
+<<<<<<< HEAD
                 <td className="px-4 py-2.5 font-mono text-slate-400 text-xs">#{row.number || row.pr_number}</td>
                 <td className="px-4 py-2.5 text-slate-900 text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.author}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs font-bold">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
                 <td className="px-4 py-2.5 text-slate-650 text-xs">{row.review_count}</td>
+=======
+                <td className="px-4 py-2.5 font-mono text-muted text-xs">#{row.number}</td>
+                <td className="px-4 py-2.5 text-primary text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
+                <td className="px-4 py-2.5 text-secondary text-xs">{row.author}</td>
+                <td className="px-4 py-2.5 text-secondary text-xs font-bold">{renderDuration(formatDurationFromDays(row.cycle_time_days))}</td>
+                <td className="px-4 py-2.5 text-secondary text-xs">{row.review_count}</td>
+>>>>>>> 01a85de (New Chahges in ui)
               </>
             )}
           />
@@ -1105,15 +1368,38 @@ function PullRequestsSection({
           onPageChange={onContributorsPage}
           renderRow={(row: any) => (
             <>
+<<<<<<< HEAD
               <td className="px-4 py-2.5 text-slate-900 text-xs font-bold">{row.username}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs">{row.total_prs}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs">{row.merged_prs}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
               <td className="px-4 py-2.5 text-slate-650 text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_wait_for_review))}</td>
+=======
+              <td className="px-4 py-2.5 text-primary text-xs font-bold">{row.username}</td>
+              <td className="px-4 py-2.5 text-secondary text-xs">{row.total_prs}</td>
+              <td className="px-4 py-2.5 text-secondary text-xs">{row.merged_prs}</td>
+              <td className="px-4 py-2.5 text-secondary text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_cycle_time))}</td>
+              <td className="px-4 py-2.5 text-secondary text-xs font-semibold">{renderDuration(formatDurationFromDays(row.avg_wait_for_review))}</td>
+>>>>>>> 01a85de (New Chahges in ui)
             </>
           )}
         />
       )}
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-indigo-600" />
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Loading PRISM...</p>
+        </div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   )
 }

@@ -47,10 +47,10 @@ export default function DataTable({
         <p className="py-10 text-center text-sm text-muted">{emptyMessage}</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-xl border border-warm-200">
+          <div className="overflow-x-auto rounded-xl border border-border">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-warm-200 bg-warm-50/50">
+                <tr className="border-b border-border bg-surface-soft/50">
                   {columns.map((col) => (
                     <th
                       key={col}
@@ -65,7 +65,7 @@ export default function DataTable({
                 {data.map((row, idx) => (
                   <tr
                     key={idx}
-                    className="border-b border-warm-100 transition hover:bg-warm-50/40"
+                    className="border-b border-border-muted transition hover:bg-bg-hover/40"
                   >
                     {renderRow(row, idx)}
                   </tr>
@@ -75,11 +75,11 @@ export default function DataTable({
           </div>
 
           {totalPages !== undefined && onPageChange && totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between border-t border-warm-200 pt-4">
+            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
               <button
                 onClick={() => onPageChange(Math.max(1, page - 1))}
                 disabled={page <= 1}
-                className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-bg-hover hover:text-primary disabled:pointer-events-none disabled:opacity-40"
               >
                 Previous
               </button>
@@ -90,7 +90,7 @@ export default function DataTable({
               <button
                 onClick={() => onPageChange(Math.min(totalPages, page + 1))}
                 disabled={page >= totalPages}
-                className="rounded-lg border border-warm-200 bg-white px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-warm-50 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-bg-hover hover:text-primary disabled:pointer-events-none disabled:opacity-40"
               >
                 Next
               </button>

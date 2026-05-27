@@ -8,16 +8,12 @@ import { GitBranch } from 'lucide-react'
 
 export default function SignupPage() {
   const router = useRouter()
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
     if (isAuthenticated()) {
       router.replace('/dashboard')
     }
   }, [router])
-
-  if (!mounted) return null
 
   return (
     <div className="auth-bg min-h-screen w-full flex flex-col items-center justify-center p-4 sm:p-6 md:p-8">
@@ -32,8 +28,8 @@ export default function SignupPage() {
             <GitBranch className="h-5.5 w-5.5" />
           </div>
 
-          <h1 className="text-2xl font-extrabold tracking-tight text-warm-900">PRISM</h1>
-          <p className="mt-1 text-xs text-warm-500 font-semibold max-w-[320px] leading-relaxed">
+          <h1 className="text-2xl font-extrabold tracking-tight text-primary">PRISM</h1>
+          <p className="mt-1 text-xs text-secondary font-semibold max-w-[320px] leading-relaxed">
             AI-Powered GitHub PR Intelligence
           </p>
         </div>

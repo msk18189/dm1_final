@@ -81,15 +81,26 @@ class IssueAnalytics:
         }
 
     def get_issues_list(self, repo_id: int, state: str = "all", page: int = 1,
-                        limit: int = 20, label: str = None) -> Dict[str, Any]:
+                        limit: int = 20, label: str = None,
+                        search: str = None, sort: str = "created_at", sort_dir: str = "desc") -> Dict[str, Any]:
         query = self.db.query(Issue).filter(Issue.repo_id == repo_id)
         if state != "all":
             query = query.filter(Issue.state == state)
         if label:
             query = query.filter(Issue.labels.contains(label))
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(Issue.title.ilike(search_term))
 
         total = query.count()
-        issues = query.order_by(desc(Issue.created_at)).offset((page - 1) * limit).limit(limit).all()
+
+        sort_col = getattr(Issue, sort, Issue.created_at)
+        if sort_dir == "desc":
+            query = query.order_by(desc(sort_col))
+        else:
+            query = query.order_by(asc(sort_col))
+
+        issues = query.offset((page - 1) * limit).limit(limit).all()
 
         now = _now_utc()
         data = []
@@ -150,13 +161,23 @@ class IssueAnalytics:
         keys = sorted(set(list(opened.keys()) + list(closed.keys())))
         return [{"month": k, "opened": opened[k], "closed": closed[k]} for k in keys]
 
-    def get_stale_issues(self, repo_id: int, stale_days: int = 30, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+    def get_stale_issues(self, repo_id: int, stale_days: int = 30, page: int = 1, limit: int = 20,
+                         search: str = None, sort: str = "created_at", sort_dir: str = "asc") -> Dict[str, Any]:
         cutoff = _cutoff(stale_days)
         query = self.db.query(Issue).filter(
             Issue.repo_id == repo_id,
             Issue.state == "open",
             Issue.created_at < cutoff
-        ).order_by(asc(Issue.created_at))
+        )
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(Issue.title.ilike(search_term))
+            
+        sort_col = getattr(Issue, sort, Issue.created_at)
+        if sort_dir == "desc":
+            query = query.order_by(desc(sort_col))
+        else:
+            query = query.order_by(asc(sort_col))
 
         total = query.count()
         issues = query.offset((page - 1) * limit).limit(limit).all()
@@ -176,6 +197,7 @@ class IssueAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
+<<<<<<< HEAD
     def get_heatmap(self, repo_id: int) -> List[int]:
         now = _now_utc()
         end_date = now
@@ -208,6 +230,69 @@ class IssueAnalytics:
             heatmap.append(level)
             
         return heatmap
+=======
+    def get_priority_distribution(self, repo_id: int) -> List[Dict[str, Any]]:
+        query = self.db.query(Issue.labels, Issue.comment_count, Issue.is_bug).filter(
+            Issue.repo_id == repo_id,
+            Issue.state == "open"
+        )
+        issues = query.all()
+
+        counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+        for (labels_json, comment_count, is_bug) in issues:
+            try:
+                labels = json.loads(labels_json) if labels_json else []
+            except Exception:
+                labels = []
+            labels_lower = [l.lower() for l in labels]
+            
+            if any(l in labels_lower for l in ["critical", "p0", "priority: critical", "severity: critical"]):
+                counts["Critical"] += 1
+            elif any(l in labels_lower for l in ["high", "p1", "priority: high", "severity: high", "bug"]):
+                counts["High"] += 1
+            elif any(l in labels_lower for l in ["medium", "p2", "priority: medium", "severity: medium", "enhancement"]):
+                counts["Medium"] += 1
+            elif is_bug and (comment_count or 0) > 5:
+                counts["Critical"] += 1
+            elif is_bug:
+                counts["High"] += 1
+            elif (comment_count or 0) > 2:
+                counts["Medium"] += 1
+            else:
+                counts["Low"] += 1
+
+        return [
+            {"name": "Critical", "value": counts["Critical"], "color": "#ef4444"},
+            {"name": "High", "value": counts["High"], "color": "#f97316"},
+            {"name": "Medium", "value": counts["Medium"], "color": "#f59e0b"},
+            {"name": "Low", "value": counts["Low"], "color": "#10b981"},
+        ]
+
+    def get_issue_heatmap(self, repo_id: int) -> List[Dict[str, Any]]:
+        cutoff = _cutoff(371)
+        issues = self.db.query(Issue.created_at).filter(
+            Issue.repo_id == repo_id, 
+            Issue.created_at >= cutoff
+        ).all()
+        
+        from collections import defaultdict
+        daily = defaultdict(int)
+        for (ca,) in issues:
+            if ca:
+                ca_utc = ca.replace(tzinfo=timezone.utc) if ca.tzinfo is None else ca
+                daily[ca_utc.strftime("%Y-%m-%d")] += 1
+                
+        now = _now_utc()
+        data = []
+        for i in range(371, -1, -1):
+            dt = now - timedelta(days=i)
+            dstr = dt.strftime("%Y-%m-%d")
+            data.append({
+                "date": dstr,
+                "count": daily[dstr]
+            })
+        return data
+>>>>>>> 01a85de (New Chahges in ui)
 
 
 # ---------------------------------------------------------------------------

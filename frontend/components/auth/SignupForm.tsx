@@ -52,8 +52,8 @@ export default function SignupForm() {
   return (
     <Card className="w-full max-w-[420px]">
       <div className="mb-6 text-center">
-        <h2 className="text-xl font-bold text-warm-900 tracking-tight">Create Workspace</h2>
-        <p className="text-xs text-warm-500 mt-1.5 leading-normal">
+        <h2 className="text-xl font-bold text-primary tracking-tight">Create Workspace</h2>
+        <p className="text-xs text-muted mt-1.5 leading-normal">
           Sign up to analyze repository cycle time & risk factors.
         </p>
       </div>
@@ -77,7 +77,7 @@ export default function SignupForm() {
             required
             className="pl-10"
           />
-          <User className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <User className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <div className="relative">
@@ -91,7 +91,7 @@ export default function SignupForm() {
             required
             className="pl-10"
           />
-          <Mail className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <Mail className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <div className="relative">
@@ -105,7 +105,7 @@ export default function SignupForm() {
             required
             className="pl-10"
           />
-          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <div className="relative">
@@ -120,7 +120,7 @@ export default function SignupForm() {
             error={confirmPassword && !passwordsMatch ? "Passwords do not match" : undefined}
             className="pl-10"
           />
-          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-warm-400 pointer-events-none" />
+          <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
         </div>
 
         <Button type="submit" loading={loading} disabled={!canSubmit} className="w-full mt-6">
@@ -128,7 +128,7 @@ export default function SignupForm() {
         </Button>
       </form>
 
-      <div className="mt-6 text-center text-xs text-warm-500">
+      <div className="mt-6 text-center text-xs text-muted">
         Already have an account?{' '}
         <Link href="/login" className="font-semibold text-palette-orange hover:text-palette-orange-dark">
           Sign In

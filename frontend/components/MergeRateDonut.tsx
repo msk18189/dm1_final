@@ -40,19 +40,19 @@ export default function MergeRateDonut({ mergeRate, openPrs, stalePrs }: MergeRa
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-3xl font-bold text-palette-teal-dark">{merged}%</span>
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-palette-teal">
+          <span className="text-3xl font-bold text-palette-teal-dark dark:text-palette-teal">{merged}%</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-palette-teal dark:text-palette-teal/80">
             Merge rate
           </span>
         </div>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-xl border border-palette-lime/25 bg-palette-lime-light px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase text-palette-lime-text">Open</p>
+        <div className="rounded-xl border border-palette-lime/25 bg-palette-lime-light dark:bg-palette-lime-dark/10 dark:border-palette-lime-dark/20 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase text-palette-lime-text dark:text-palette-lime-light">Open</p>
           <p className="text-lg font-bold text-palette-lime">{openPrs}</p>
         </div>
-        <div className="rounded-xl border border-palette-amber/25 bg-palette-amber-light px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase text-palette-amber-text">Stale</p>
+        <div className="rounded-xl border border-palette-amber/25 bg-palette-amber-light dark:bg-palette-amber-dark/10 dark:border-palette-amber-dark/20 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase text-palette-amber-text dark:text-palette-amber-light">Stale</p>
           <p className="text-lg font-bold text-palette-amber">{stalePrs}</p>
         </div>
       </div>
