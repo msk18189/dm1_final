@@ -55,30 +55,55 @@ export default function DashboardFilters({
     }
   }
 
+  const selectCls = [
+    'w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] px-3 py-2.5',
+    'text-sm font-medium text-slate-800 dark:text-slate-200',
+    'transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:focus:ring-indigo-550/10',
+    'hover:border-slate-300 dark:hover:border-slate-700',
+    'appearance-none cursor-pointer',
+  ].join(' ')
+
+  const inputCls = [
+    'rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] px-3 py-2.5',
+    'text-sm font-medium text-slate-800 dark:text-slate-200',
+    'transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:focus:ring-indigo-550/10',
+  ].join(' ')
+
+  const labelCls = 'mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400'
+
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover mb-8">
+    <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm mb-6"
+    >
       <div className="mb-4 flex items-center gap-2">
-        <SlidersHorizontal className="h-5 w-5 text-palette-orange" />
-        <h3 className="section-title">Filters</h3>
+        <div className="p-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/30">
+          <SlidersHorizontal className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+        </div>
+        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Filters</h3>
       </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end flex-wrap">
         <div className="flex-1 min-w-[280px]">
-          <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-midnight-500">
-            Date range
-          </label>
+          <label className={labelCls}>Date range</label>
           <div className="flex flex-wrap gap-2 items-center">
-            <select
-              value={isCustomRange ? 'custom-range' : (isCustomDays ? 'custom-days' : (filters.days ?? ''))}
-              onChange={(e) => handleSelectChange(e.target.value)}
-              className="input-field text-sm min-w-[140px] flex-1"
-            >
-              <option value="">All time</option>
-              <option value="30">Last 30 days</option>
-              <option value="90">Last 90 days</option>
-              <option value="180">Last 180 days</option>
-              <option value="custom-days">Custom days...</option>
-              <option value="custom-range">Customize Date...</option>
-            </select>
+            <div className="relative flex-1 min-w-[140px]">
+              <select
+                value={isCustomRange ? 'custom-range' : (isCustomDays ? 'custom-days' : (filters.days ?? ''))}
+                onChange={(e) => handleSelectChange(e.target.value)}
+                className={selectCls}
+              >
+                <option value="">All time</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="180">Last 180 days</option>
+                <option value="custom-days">Custom days...</option>
+                <option value="custom-range">Customize Date...</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
             {isCustomDays && (
               <input
                 type="number"
@@ -88,7 +113,7 @@ export default function DashboardFilters({
                   const val = e.target.value ? Math.max(1, Number(e.target.value)) : 1
                   onChange({ ...filters, days: val })
                 }}
-                className="input-field text-sm w-20 text-center"
+                className={`${inputCls} w-20 text-center`}
                 placeholder="Days"
               />
             )}
@@ -100,56 +125,70 @@ export default function DashboardFilters({
                   onChange={(e) => {
                     onChange({ ...filters, startDate: e.target.value })
                   }}
-                  className="input-field text-sm px-2.5 py-2 w-[145px]"
+                  className={`${inputCls} px-2.5 py-2 w-[145px]`}
                 />
-                <span className="text-xs text-midnight-400 font-medium">to</span>
+                <span className="text-xs text-slate-500 font-medium">to</span>
                 <input
                   type="date"
                   value={filters.endDate || ''}
                   onChange={(e) => {
                     onChange({ ...filters, endDate: e.target.value })
                   }}
-                  className="input-field text-sm px-2.5 py-2 w-[145px]"
+                  className={`${inputCls} px-2.5 py-2 w-[145px]`}
                 />
               </div>
             )}
           </div>
         </div>
         <div className="w-full lg:w-auto lg:min-w-[180px]">
-          <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-midnight-500">
-            Author
-          </label>
-          <select
-            value={filters.author}
-            onChange={(e) => onChange({ ...filters, author: e.target.value })}
-            className="input-field text-sm w-full"
-          >
-            <option value="all">All authors</option>
-            {authors.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
+          <label className={labelCls}>Author</label>
+          <div className="relative">
+            <select
+              value={filters.author}
+              onChange={(e) => onChange({ ...filters, author: e.target.value })}
+              className={selectCls}
+            >
+              <option value="all">All authors</option>
+              {authors.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
         </div>
         <div className="w-full lg:w-auto lg:min-w-[180px]">
-          <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-midnight-500">
-            PR state
-          </label>
-          <select
-            value={filters.state}
-            onChange={(e) => onChange({ ...filters, state: e.target.value })}
-            className="input-field text-sm w-full"
-          >
-            <option value="ALL">All states</option>
-            <option value="OPEN">Open</option>
-            <option value="MERGED">Merged</option>
-            <option value="CLOSED">Closed</option>
-            <option value="STALE">Stale (&gt;30d)</option>
-          </select>
+          <label className={labelCls}>PR state</label>
+          <div className="relative">
+            <select
+              value={filters.state}
+              onChange={(e) => onChange({ ...filters, state: e.target.value })}
+              className={selectCls}
+            >
+              <option value="ALL">All states</option>
+              <option value="OPEN">Open</option>
+              <option value="MERGED">Merged</option>
+              <option value="CLOSED">Closed</option>
+              <option value="STALE">Stale (&gt;30d)</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
         </div>
         <div className="w-full lg:w-auto lg:flex-initial">
-          <button type="button" onClick={onApply} className="btn-primary w-full lg:px-8 text-sm">
+          <button
+            type="button"
+            onClick={onApply}
+            className="w-full lg:px-8 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-indigo-700 hover:shadow-md dark:shadow-[0_4px_12px_rgba(99,102,241,0.2)] dark:hover:shadow-[0_6px_20px_rgba(99,102,241,0.3)]"
+          >
             Apply filters
           </button>
         </div>

@@ -878,12 +878,48 @@ function PullRequestsSection({
 
   // KPI Row
   const prStrip = [
-    { title: 'Open PRs', value: openCount, accent: 'text-orange-600 bg-orange-50 border-orange-100' },
-    { title: 'Merged PRs', value: mergedCount, accent: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
-    { title: 'Closed (not merged)', value: closedCount, accent: 'text-slate-650 bg-slate-50 border-slate-100' },
-    { title: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', accent: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
-    { title: 'Review Wait', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_wait)) : '—', accent: 'text-[#c2410c] bg-[#fdf2ec] border-[#fce6d8]' },
-    { title: 'Review Duration', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration)) : '—', accent: 'text-purple-600 bg-purple-50 border-purple-100' },
+    { 
+      title: 'Open PRs', 
+      value: openCount, 
+      labelCls: 'text-orange-600/70 dark:text-orange-400/80', 
+      valueCls: 'text-orange-700 dark:text-orange-300', 
+      cardCls: 'bg-orange-50 dark:bg-orange-950/10 border-orange-100 dark:border-orange-900/20' 
+    },
+    { 
+      title: 'Merged PRs', 
+      value: mergedCount, 
+      labelCls: 'text-emerald-600/70 dark:text-emerald-400/80', 
+      valueCls: 'text-emerald-700 dark:text-emerald-300', 
+      cardCls: 'bg-emerald-50 dark:bg-emerald-950/10 border-emerald-100 dark:border-emerald-900/20' 
+    },
+    { 
+      title: 'Closed (not merged)', 
+      value: closedCount, 
+      labelCls: 'text-slate-500/80 dark:text-slate-400/80', 
+      valueCls: 'text-slate-700 dark:text-slate-300', 
+      cardCls: 'bg-slate-50 dark:bg-slate-900/20 border-slate-100 dark:border-slate-800/80' 
+    },
+    { 
+      title: 'Avg Cycle Time', 
+      value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', 
+      labelCls: 'text-indigo-600/70 dark:text-indigo-400/80', 
+      valueCls: 'text-indigo-700 dark:text-indigo-300', 
+      cardCls: 'bg-indigo-50 dark:bg-indigo-950/10 border-indigo-100 dark:border-indigo-900/20' 
+    },
+    { 
+      title: 'Review Wait', 
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_wait)) : '—', 
+      labelCls: 'text-orange-700/70 dark:text-orange-400/80', 
+      valueCls: 'text-orange-850 dark:text-orange-355', 
+      cardCls: 'bg-[#fdf2ec] dark:bg-[#c2410c]/5 border-[#fce6d8] dark:border-orange-900/20' 
+    },
+    { 
+      title: 'Review Duration', 
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration)) : '—', 
+      labelCls: 'text-purple-600/70 dark:text-purple-400/80', 
+      valueCls: 'text-purple-700 dark:text-purple-300', 
+      cardCls: 'bg-purple-50 dark:bg-purple-950/10 border-purple-100 dark:border-purple-900/20' 
+    },
   ]
 
   return (
@@ -905,22 +941,29 @@ function PullRequestsSection({
 
       {/* KPI Cards Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {prStrip.map((item) => (
-          <div key={item.title} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-1.5 ${item.accent}`}>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">{item.title}</span>
-            <span className="text-xl font-black tracking-tight leading-none">{item.value}</span>
-          </div>
-        ))}
+        {prStrip.map((item) => {
+          const strVal = String(item.value)
+          const isShort = strVal.length <= 6
+          return (
+            <div key={item.title} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-2 ${item.cardCls}`}>
+              <span className={`text-[10px] font-bold uppercase tracking-wider block ${item.labelCls}`}>{item.title}</span>
+              <span
+                className={`font-black tracking-tight leading-none truncate ${isShort ? 'text-2xl' : 'text-base'} ${item.valueCls}`}
+                title={strVal}
+              >{item.value}</span>
+            </div>
+          )
+        })}
       </div>
 
       {/* PR Lifecycle donut & bottlenecks list */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* PR Lifecycle Flow - Donut chart */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 mb-1">PR Status Distribution</h3>
-            <p className="text-[10px] text-slate-400 font-semibold">Total Lifecycle PRs: {kpi?.total_prs ?? 113}</p>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">PR Status Distribution</h3>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">Total Lifecycle PRs: {kpi?.total_prs ?? 113}</p>
           </div>
           
           <div className="flex items-center justify-between gap-4 py-4">
@@ -943,14 +986,14 @@ function PullRequestsSection({
             </ResponsiveContainer>
 
             {/* Custom Legend */}
-            <div className="flex-1 space-y-1.5 text-xs font-semibold text-slate-650">
+            <div className="flex-1 space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400">
               {pieData.map((item) => (
                 <div key={item.name} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
                     <span>{item.name}</span>
                   </div>
-                  <span className="font-bold text-slate-900">{item.value}</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">{item.value}</span>
                 </div>
               ))}
             </div>
@@ -958,41 +1001,41 @@ function PullRequestsSection({
         </div>
 
         {/* Bottleneck analysis list */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f1422] p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 mb-1">Bottleneck Analysis</h3>
-            <p className="text-[10px] text-slate-400 font-semibold">Flagging reviewer constraints and latency risks</p>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">Bottleneck Analysis</h3>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold">Flagging reviewer constraints and latency risks</p>
           </div>
 
           <div className="space-y-3 mt-4">
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-orange-50/50 border border-orange-100">
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-orange-50/50 dark:bg-orange-950/10 border border-orange-100 dark:border-orange-900/20">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-orange-100 text-orange-700">
+                <span className="p-1 rounded-lg bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400">
                   <UserCheck className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-orange-950">Waiting for review</span>
+                <span className="text-xs font-bold text-orange-955 dark:text-orange-200">Waiting for review</span>
               </div>
-              <span className="text-xs font-black text-orange-700">27 PRs &gt; 7 days</span>
+              <span className="text-xs font-black text-orange-700 dark:text-orange-400">27 PRs &gt; 7 days</span>
             </div>
 
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/50 border border-amber-100">
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/10 border border-amber-100 dark:border-amber-900/20">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-amber-100 text-amber-700">
+                <span className="p-1 rounded-lg bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
                   <CheckCircle className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-amber-950">Waiting for approval</span>
+                <span className="text-xs font-bold text-amber-955 dark:text-amber-200">Waiting for approval</span>
               </div>
-              <span className="text-xs font-black text-amber-700">9 PRs &gt; 5 days</span>
+              <span className="text-xs font-black text-amber-700 dark:text-amber-400">9 PRs &gt; 5 days</span>
             </div>
 
-            <div className="flex items-center justify-between p-2.5 rounded-xl bg-purple-50/50 border border-purple-100">
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-purple-50/50 dark:bg-purple-950/10 border border-purple-100 dark:border-purple-900/20">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-purple-100 text-purple-700">
+                <span className="p-1 rounded-lg bg-purple-100 dark:bg-purple-950/30 text-purple-700 dark:text-purple-400">
                   <Timer className="h-4 w-4" />
                 </span>
-                <span className="text-xs font-bold text-purple-950">Long review duration</span>
+                <span className="text-xs font-bold text-purple-955 dark:text-purple-200">Long review duration</span>
               </div>
-              <span className="text-xs font-black text-purple-700">12 PRs &gt; 3 days</span>
+              <span className="text-xs font-black text-purple-700 dark:text-purple-400">12 PRs &gt; 3 days</span>
             </div>
           </div>
         </div>

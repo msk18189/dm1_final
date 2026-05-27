@@ -12,6 +12,13 @@
   --c-amber: #f59e0b;
 }
 
+.dark {
+  --bg-base: #080c14;
+  --text-heading: #f8fafc;
+  --text-body: #cbd5e1;
+  --text-muted: #94a3b8;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -30,6 +37,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-base);
   color: var(--text-body);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .gradient-text {
@@ -39,24 +47,69 @@ body {
   background-clip: text;
 }
 
+/* ─── Typography Hierarchy ───────────────────────────────────────────────── */
 .text-heading {
-  @apply font-semibold text-midnight-50;
+  @apply font-bold text-slate-900 tracking-tight;
+}
+.dark .text-heading {
+  @apply text-slate-100;
 }
 
 .text-body {
-  @apply text-midnight-200;
+  @apply text-slate-700 font-medium;
+}
+.dark .text-body {
+  @apply text-slate-300;
 }
 
 .text-muted {
-  @apply text-midnight-400;
+  @apply text-slate-500 font-medium;
+}
+.dark .text-muted {
+  @apply text-slate-400;
 }
 
+.page-heading {
+  @apply text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl;
+}
+.dark .page-heading {
+  @apply text-slate-50;
+}
+
+.page-subheading {
+  @apply mt-1 text-sm text-slate-500 font-medium;
+}
+.dark .page-subheading {
+  @apply text-slate-400;
+}
+
+.section-title {
+  @apply text-base font-bold tracking-tight text-slate-900;
+}
+.dark .section-title {
+  @apply text-slate-100;
+}
+
+.section-subtitle {
+  @apply mt-0.5 text-xs text-slate-500 font-semibold;
+}
+.dark .section-subtitle {
+  @apply text-slate-400;
+}
+
+/* ─── Card Design System ─────────────────────────────────────────────────── */
 .card {
-  @apply rounded-card border border-warm-200 bg-white p-6 shadow-card;
+  @apply rounded-card border border-slate-200/80 bg-white p-6 shadow-card transition-all duration-200;
+}
+.dark .card {
+  @apply border-slate-800 bg-[#0f1422] shadow-[0_1px_3px_rgba(0,0,0,0.3)];
 }
 
 .card-hover {
-  @apply transition-all duration-300 hover:border-warm-300 hover:shadow-md;
+  @apply hover:border-slate-300 hover:shadow-md hover:-translate-y-[1px];
+}
+.dark .card-hover {
+  @apply hover:border-slate-700 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] hover:-translate-y-[1px];
 }
 
 .card-glow {
@@ -65,7 +118,10 @@ body {
 
 /* Landing — centered analyze box with warm glow */
 .landing-center {
-  @apply flex min-h-screen w-full items-center justify-center bg-warm-50 bg-mesh p-4 sm:p-8;
+  @apply flex min-h-screen w-full items-center justify-center bg-slate-50 p-4 sm:p-8;
+}
+.dark .landing-center {
+  @apply bg-[#080c14];
 }
 
 .landing-glow-wrap {
@@ -78,8 +134,8 @@ body {
   inset: -40px;
   border-radius: 2.5rem;
   background: radial-gradient(ellipse at center,
-      rgba(99, 102, 241, 0.1) 0%,
-      rgba(16, 185, 129, 0.05) 50%,
+      rgba(99, 102, 241, 0.08) 0%,
+      rgba(16, 185, 129, 0.04) 50%,
       transparent 75%);
   filter: blur(32px);
   z-index: 0;
@@ -89,17 +145,30 @@ body {
 .landing-glow-box {
   @apply relative z-10 overflow-hidden rounded-[24px] border border-slate-200/80 bg-white/95 shadow-xl backdrop-blur-md;
 }
+.dark .landing-glow-box {
+  @apply border-slate-800 bg-[#0f1422]/95 shadow-[0_12px_40px_rgba(0,0,0,0.5)];
+}
 
 .landing-hero-title {
   @apply mb-6 text-center;
 }
 
 .input-field {
-  @apply w-full rounded-xl border border-warm-200 bg-warm-50 px-4 py-3 text-midnight-700 placeholder-midnight-400 transition focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/25;
+  @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-slate-800 placeholder-slate-400 transition focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/25;
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+}
+.dark .input-field {
+  @apply border-slate-800 bg-[#0f1422] text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:ring-indigo-500/25;
+  color: #f8fafc !important;
+  background-color: #0f1422 !important;
 }
 
 .auth-card {
-  @apply rounded-[24px] border border-warm-200 bg-white/95 p-8 shadow-xl shadow-slate-200/40;
+  @apply rounded-[24px] border border-slate-200 bg-white/95 p-8 shadow-xl shadow-slate-200/40;
+}
+.dark .auth-card {
+  @apply border-slate-800 bg-[#0f1422]/95 shadow-2xl shadow-black/50;
 }
 
 .btn-primary {
@@ -107,27 +176,58 @@ body {
 }
 
 .btn-secondary {
-  @apply rounded-xl border border-warm-200 bg-white px-5 py-2.5 font-semibold text-midnight-900 transition-all duration-200 hover:border-indigo-500 hover:bg-indigo-50;
+  @apply rounded-xl border border-slate-200 bg-white px-5 py-2.5 font-semibold transition-all duration-200 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-700;
+  color: #1e293b !important;
+}
+.dark .btn-secondary {
+  @apply border-slate-800 bg-[#0f1422] hover:border-indigo-500 hover:bg-indigo-950/30 hover:text-indigo-400;
+  color: #f8fafc !important;
 }
 
 .btn-ghost {
-  @apply rounded-lg px-4 py-2 text-sm text-midnight-300 transition hover:bg-warm-100 hover:text-midnight-50;
+  @apply rounded-lg px-4 py-2 text-sm transition hover:bg-slate-100;
+  color: #475569 !important;
+}
+.btn-ghost:hover {
+  color: #0f172a !important;
+}
+.dark .btn-ghost {
+  @apply hover:bg-slate-800;
+  color: #cbd5e1 !important;
+}
+.dark .btn-ghost:hover {
+  color: #ffffff !important;
 }
 
-.section-title {
-  @apply text-lg font-semibold tracking-tight text-midnight-50;
+/* ─── Global form elements styling overrides ────────────────────────────── */
+select,
+select option,
+input[type="date"],
+input[type="number"],
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+textarea {
+  color: #1e293b;
+  background-color: #ffffff;
+  border-color: #e2e8f0;
 }
 
-.section-subtitle {
-  @apply mt-0.5 text-xs text-midnight-400;
-}
-
-.page-heading {
-  @apply text-2xl font-bold tracking-tight text-midnight-50 sm:text-3xl;
-}
-
-.page-subheading {
-  @apply mt-1 max-w-xl text-sm text-midnight-300;
+.dark select,
+.dark select option,
+.dark input[type="date"],
+.dark input[type="number"],
+.dark input[type="text"],
+.dark input[type="email"],
+.dark input[type="password"],
+.dark input[type="search"],
+.dark input[type="url"],
+.dark textarea {
+  color: #f8fafc;
+  background-color: #0f1422;
+  border-color: #1e293d;
 }
 
 ::-webkit-scrollbar {
@@ -138,10 +238,16 @@ body {
 ::-webkit-scrollbar-track {
   background: #f1f5f9;
 }
+.dark ::-webkit-scrollbar-track {
+  background: #0d121f;
+}
 
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #1e293d;
 }
 
 .auth-bg {
@@ -151,6 +257,11 @@ body {
               #faf6f0;
   position: relative;
   overflow: hidden;
+}
+.dark .auth-bg {
+  background: radial-gradient(circle at 15% 25%, rgba(198, 123, 92, 0.08) 0%, transparent 40%),
+              radial-gradient(circle at 85% 75%, rgba(212, 160, 84, 0.06) 0%, transparent 45%),
+              #080c14;
 }
 
 /* Ambient gradient mesh glowing blobs */
@@ -218,7 +329,6 @@ body {
     page-break-after: auto;
     break-after: auto;
   }
-  /* Hide any scrollbars and UI that shouldn't be printed */
   ::-webkit-scrollbar {
     display: none;
   }
