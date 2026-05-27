@@ -12,7 +12,8 @@ import RepositoryInput from '@/components/RepositoryInput'
 export default function AnalyzePage() {
   const router = useRouter()
   const [githubToken, setGithubToken] = useState<string>('')
-  const [userLabel, setUserLabel] = useState<string | undefined>()
+  const [userName, setUserName] = useState<string | undefined>()
+  const [userEmail, setUserEmail] = useState<string | undefined>()
   const [isSyncing, setIsSyncing] = useState(false)
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
@@ -49,7 +50,8 @@ export default function AnalyzePage() {
       try {
         const u = await getAuthUser()
         if (u) {
-          setUserLabel(u.username)
+          setUserName(u.username || undefined)
+          setUserEmail(u.email || undefined)
         }
       } catch (err) {
         console.error("Auth load failed", err)
@@ -101,7 +103,8 @@ export default function AnalyzePage() {
       hasData={false}
       repoLabel=""
       activeSection="analyze"
-      userLabel={userLabel}
+      userName={userName}
+      userEmail={userEmail}
     >
       <div className="space-y-6">
         {globalError && (

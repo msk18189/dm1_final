@@ -109,7 +109,8 @@ export default function DashboardPage() {
   const router = useRouter()
   // Auth + Token
   const [githubToken, setGithubToken] = useState<string>(() => loadGithubToken())
-  const [userLabel, setUserLabel] = useState<string | undefined>()
+  const [userName, setUserName] = useState<string | undefined>()
+  const [userEmail, setUserEmail] = useState<string | undefined>()
 
   // Repo state
   const [repoId, setRepoId] = useState<number | null>(null)
@@ -153,7 +154,8 @@ export default function DashboardPage() {
       try {
         const u = await getAuthUser()
         if (u) {
-          setUserLabel(u.username)
+          setUserName(u.username || undefined)
+          setUserEmail(u.email || undefined)
         }
       } catch (err) {
         console.error("Auth load failed", err)
@@ -415,7 +417,8 @@ export default function DashboardPage() {
       repoLabel={repoLabel}
       activeSection={activeSection}
       onNavigate={setActiveSection}
-      userLabel={userLabel}
+      userName={userName}
+      userEmail={userEmail}
       syncCounts={syncCounts}
       syncStatus={syncStatus}
       onSync={handleSync}
