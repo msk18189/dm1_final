@@ -30,7 +30,7 @@ export default function DataTable({
   const totalPages = pages
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col h-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
         <div className="flex items-center gap-2 text-primary">
           {icon}
@@ -44,10 +44,12 @@ export default function DataTable({
       </div>
 
       {data.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted">{emptyMessage}</p>
+        <div className="flex-1 flex flex-col justify-center items-center py-10">
+          <p className="text-sm text-muted">{emptyMessage}</p>
+        </div>
       ) : (
         <>
-          <div className="overflow-y-auto overflow-x-auto max-h-[640px] rounded-xl border border-border" style={{ minHeight: '420px' }}>
+          <div className="flex-1 overflow-y-auto overflow-x-auto rounded-xl border border-border" style={{ minHeight: '420px' }}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border bg-surface-soft/50">

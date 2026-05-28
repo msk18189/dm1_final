@@ -122,6 +122,7 @@ export const getSyncStatus = async (repoId: number) => {
     sync_started_at?: string | null
     initial_sync_completed: boolean
     last_synced_at: string | null; last_successful_sync: string | null
+    next_sync_at: string | null
     error_message: string | null
     total_prs: number; total_issues: number; total_branches: number
     total_forks: number; total_workflow_runs: number; total_discussions: number
@@ -277,6 +278,11 @@ export const getDiscussions = async (repoId: number, page = 1, limit = 20) => {
 
 export const getDiscussionsAnalytics = async (repoId: number) => {
   const response = await api.get(`/api/discussions/analytics/${repoId}`)
+  return response.data
+}
+
+export const getDiscussionsTimeline = async (repoId: number) => {
+  const response = await api.get(`/api/discussions/timeline/${repoId}`)
   return response.data
 }
 

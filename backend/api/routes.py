@@ -429,9 +429,27 @@ def analyze_repository(
 @router.get("/api/sync-status/{repo_id}")
 def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
     """Get sync status, progress (with ETA), and per-module record counts."""
+    from datetime import datetime, timedelta, timezone
+    from config import SYNC_INTERVAL_MINUTES
+    
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
+    
+    # Helper to ensure ISO string has timezone info
+    def to_iso_with_tz(dt):
+        if not dt:
+            return None
+        # If datetime is naive, treat as UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    
+    # Calculate next sync time
+    next_sync_at = None
+    if repo.last_successful_sync:
+        next_sync_at = repo.last_successful_sync + timedelta(minutes=SYNC_INTERVAL_MINUTES)
+    
     return {
         "id": repo.id,
         "owner": repo.owner,
@@ -441,10 +459,11 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "sync_mode": getattr(repo, "sync_mode", "full") or "full",
         "sync_progress": repo.sync_progress,
         "sync_duration": repo.sync_duration,
-        "sync_started_at": repo.sync_started_at.isoformat() if getattr(repo, "sync_started_at", None) else None,
+        "sync_started_at": to_iso_with_tz(getattr(repo, "sync_started_at", None)),
         "initial_sync_completed": repo.initial_sync_completed,
-        "last_synced_at": repo.last_synced_at.isoformat() if repo.last_synced_at else None,
-        "last_successful_sync": repo.last_successful_sync.isoformat() if repo.last_successful_sync else None,
+        "last_synced_at": to_iso_with_tz(repo.last_synced_at),
+        "last_successful_sync": to_iso_with_tz(repo.last_successful_sync),
+        "next_sync_at": to_iso_with_tz(next_sync_at),
         "error_message": repo.error_message,
         "total_prs": repo.total_prs,
         "total_issues": repo.total_issues,
@@ -463,7 +482,7 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "synced_workflows": normalize_telemetry_counts(repo.synced_workflows, repo.expected_workflows)[0],
         "rate_limit_remaining": repo.rate_limit_remaining,
         "rate_limit_limit": repo.rate_limit_limit,
-        "rate_limit_reset": repo.rate_limit_reset.isoformat() if repo.rate_limit_reset else None,
+        "rate_limit_reset": to_iso_with_tz(repo.rate_limit_reset),
     }
 
 
@@ -769,6 +788,11 @@ def get_discussions(repo_id: int, page: int = 1, limit: int = 20, db: Session = 
 def get_discussions_analytics(repo_id: int, db: Session = Depends(get_db)):
     """Discussion analytics summary."""
     return DiscussionAnalytics(db).get_summary(repo_id)
+
+@router.get("/api/discussions/timeline/{repo_id}")
+def get_discussions_timeline(repo_id: int, db: Session = Depends(get_db)):
+    """Discussion activity timeline over time."""
+    return DiscussionAnalytics(db).get_activity_timeline(repo_id)
 
 
 # ---------------------------------------------------------------------------

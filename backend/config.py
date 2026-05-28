@@ -11,7 +11,8 @@ GITHUB_REST_URL = "https://api.github.com"
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "300"))   
-SYNC_RATE_LIMIT_BUFFER = int(os.getenv("SYNC_RATE_LIMIT_BUFFER", "50")) 
+SYNC_RATE_LIMIT_BUFFER = int(os.getenv("SYNC_RATE_LIMIT_BUFFER", "50"))
+SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "60"))  # Default: 1 hour
 STALE_PR_DAYS = 30
 STALE_ISSUE_DAYS = 30
 STALE_BRANCH_DAYS = 90

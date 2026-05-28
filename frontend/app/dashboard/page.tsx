@@ -856,44 +856,82 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 </span>
                 <h3 className="text-sm font-bold text-primary">Executive Summary</h3>
               </div>
-              <button className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 text-xs font-semibold rounded-lg transition">
-                <Sparkles className="h-3.5 w-3.5" />
-                AI Insights
-              </button>
             </div>
             
-            <p className="text-secondary text-sm leading-relaxed max-w-2xl font-medium">
+            <div className="space-y-3">
               {kpi ? (
                 <>
-                  Merge rate is{' '}
-                  <span className={`font-bold ${(kpi.merge_rate ?? 0) >= 75 ? 'text-emerald-600 dark:text-emerald-400' : 'text-orange-600 dark:text-orange-400'}`}>
-                    {kpi.merge_rate ?? '—'}%
-                  </span>
-                  {'. '}
-                  {kpi.stale_prs > 0 ? (
-                    <><span className="font-bold text-orange-600 dark:text-orange-400 underline decoration-wavy">{kpi.stale_prs} stale PR{kpi.stale_prs !== 1 ? 's' : ''}</span> need attention.</>
-                  ) : (
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">No stale PRs detected.</span>
-                  )}
+                  {/* Primary insight */}
+                  <p className="text-secondary text-sm leading-relaxed font-medium">
+                    {kpi.merge_rate >= 75 ? (
+                      <>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mb-1">
+                          <CheckCircle className="h-4 w-4" /> Strong merging cadence
+                        </span>
+                        With a <span className="font-bold">{kpi.merge_rate}% merge rate</span>, your team is closing PRs efficiently. Average cycle time of <span className="font-bold">{renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time))}</span> shows good momentum.
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1 mb-1">
+                          <AlertCircle className="h-4 w-4" /> Merge rate below target
+                        </span>
+                        Current merge rate of <span className="font-bold">{kpi.merge_rate}%</span> suggests review bottlenecks or declining PRs. Review wait time is <span className="font-bold">{renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review))}</span>.
+                      </>
+                    )}
+                  </p>
+
+                  {/* Risk indicators */}
+                  <div className="flex flex-wrap gap-2">
+                    {kpi.stale_prs > 0 && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-900/30 text-orange-700 dark:text-orange-400 text-xs font-semibold">
+                        <AlertOctagon className="h-3.5 w-3.5" />
+                        {kpi.stale_prs} stale PR{kpi.stale_prs !== 1 ? 's' : ''} blocking progress
+                      </div>
+                    )}
+                    {(kpi.avg_wait_for_review ?? 0) > 2 && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-semibold">
+                        <Eye className="h-3.5 w-3.5" />
+                        Review wait above SLA
+                      </div>
+                    )}
+                    {ciScore !== null && ciScore < 80 && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold">
+                        <Zap className="h-3.5 w-3.5" />
+                        CI/CD stability at {ciScore}%
+                      </div>
+                    )}
+                    {kpi.stale_prs === 0 && (kpi.avg_wait_for_review ?? 0) <= 2 && ciScore >= 80 && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-semibold">
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        All metrics healthy
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <span className="text-muted italic">Sync repository to see executive insights.</span>
               )}
-            </p>
+            </div>
           </div>
 
           {/* Metric horizontal strip */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-border pt-4">
             {statusStrip.map((item) => (
-              <div key={item.title} className="space-y-1">
+              <div key={item.title} className="space-y-1.5">
                 <span className="text-[10px] font-bold text-muted uppercase tracking-wider block">{item.title}</span>
                 <div className="flex items-center gap-1.5">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold border ${item.style}`}>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border ${item.style}`}>
                     {item.icon}
                     {item.value}
                   </span>
                 </div>
-                <span className="text-[10px] text-muted block">{item.trend}</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-muted font-medium">{item.trend}</span>
+                  {item.trend === 'Healthy' && <ArrowUpRight className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />}
+                  {item.trend === 'Needs review' && <AlertCircle className="h-3 w-3 text-orange-600 dark:text-orange-400" />}
+                  {item.trend === 'Needs attention' && <AlertCircle className="h-3 w-3 text-rose-600 dark:text-rose-400" />}
+                  {item.trend === 'Stable' && <CheckCircle className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />}
+                </div>
               </div>
             ))}
           </div>
@@ -982,6 +1020,87 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
           </button>
         ))}
       </div>
+
+      {/* Insights & Recommendations Panel */}
+      {kpi && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Performance Trend */}
+          <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Performance Trend</p>
+                <h4 className="text-sm font-bold text-primary mt-1">Cycle Time</h4>
+              </div>
+              <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <p className="text-xs text-secondary leading-relaxed">
+              {kpi.avg_cycle_time && kpi.avg_cycle_time <= 5 ? (
+                <>Average of <span className="font-bold text-emerald-600 dark:text-emerald-400">{renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time))}</span> indicates healthy delivery velocity.</>
+              ) : (
+                <>Average of <span className="font-bold text-orange-600 dark:text-orange-400">{renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time))}</span> suggests potential workflow friction.</>
+              )}
+            </p>
+          </div>
+
+          {/* Review Efficiency */}
+          <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Review Efficiency</p>
+                <h4 className="text-sm font-bold text-primary mt-1">Wait Time</h4>
+              </div>
+              <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            </div>
+            <p className="text-xs text-secondary leading-relaxed">
+              {(kpi.avg_wait_for_review ?? 0) <= 1 ? (
+                <>Quick turnaround of <span className="font-bold text-emerald-600 dark:text-emerald-400">{renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review))}</span> to first review—well-resourced team.</>
+              ) : (
+                <>Review delay of <span className="font-bold text-orange-600 dark:text-orange-400">{renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review))}</span> may bottleneck PRs.</>
+              )}
+            </p>
+          </div>
+
+          {/* Code Quality Signals */}
+          <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Quality Signals</p>
+                <h4 className="text-sm font-bold text-primary mt-1">Merge Rate</h4>
+              </div>
+              <GitMerge className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <p className="text-xs text-secondary leading-relaxed">
+              {kpi.merge_rate >= 80 ? (
+                <><span className="font-bold text-emerald-600 dark:text-emerald-400">{kpi.merge_rate}% merge rate</span> shows high-quality PRs with low rejection.</>
+              ) : kpi.merge_rate >= 60 ? (
+                <><span className="font-bold text-amber-600 dark:text-amber-400">{kpi.merge_rate}% merge rate</span> reflects moderate PR quality or complexity.</>
+              ) : (
+                <><span className="font-bold text-rose-600 dark:text-rose-400">{kpi.merge_rate}% merge rate</span> suggests significant review feedback or rejection.</>
+              )}
+            </p>
+          </div>
+
+          {/* Backlog Health */}
+          <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Backlog Health</p>
+                <h4 className="text-sm font-bold text-primary mt-1">Stale Items</h4>
+              </div>
+              <AlertOctagon className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+            </div>
+            <p className="text-xs text-secondary leading-relaxed">
+              {kpi.stale_prs === 0 ? (
+                <><span className="font-bold text-emerald-600 dark:text-emerald-400">No stale PRs</span>—backlog is current and healthy.</>
+              ) : kpi.stale_prs <= 2 ? (
+                <><span className="font-bold text-amber-600 dark:text-amber-400">{kpi.stale_prs} stale PR{kpi.stale_prs !== 1 ? 's' : ''}</span> require attention soon.</>
+              ) : (
+                <><span className="font-bold text-rose-600 dark:text-rose-400">{kpi.stale_prs} stale PR{kpi.stale_prs !== 1 ? 's' : ''}</span> indicate process breakdowns.</>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Asymmetric charts & lists grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1342,9 +1461,9 @@ function PullRequestsSection({
       )}
 
       {/* Main Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
         {oldestPRs && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col h-full">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2 shrink-0">
               <div className="flex items-center gap-2 text-primary">
                 <Clock className="h-4.5 w-4.5 text-orange-500" />
@@ -1358,7 +1477,7 @@ function PullRequestsSection({
               </div>
             ) : (
               <>
-                <div className="overflow-y-auto overflow-x-auto max-h-[640px] rounded-xl border border-border" style={{ minHeight: '420px' }}>
+                <div className="flex-1 overflow-y-auto overflow-x-auto rounded-xl border border-border" style={{ minHeight: '420px' }}>
                   <table className="w-full">
                     <thead className="sticky top-0 bg-surface-soft/95 backdrop-blur z-10">
                       <tr className="border-b border-border">

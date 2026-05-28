@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { MessageCircle, CheckCircle2, ThumbsUp, Users, HelpCircle, Activity, ExternalLink, Calendar } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { getDiscussionsAnalytics, getDiscussions } from '@/lib/api'
+import { getDiscussionsAnalytics, getDiscussions, getDiscussionsTimeline } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
  
 interface Props { repoId: number; syncStatus?: any }
@@ -12,15 +12,16 @@ interface Props { repoId: number; syncStatus?: any }
 export default function DiscussionsPanel({ repoId, syncStatus }: Props) {
   const [summary, setSummary] = useState<any>(null)
   const [discussions, setDiscussions] = useState<any>(null)
+  const [timeline, setTimeline] = useState<any>(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
- 
+
   useEffect(() => {
     setLoading(true)
-    getDiscussionsAnalytics(repoId).then(setSummary).catch(console.error).finally(() => setLoading(false))
-  }, [repoId])
- 
-  useEffect(() => {
+    Promise.all([
+      getDiscussionsAnalytics(repoId).then(setSummary).catch(console.error),
+      getDiscussionsTimeline(repoId).then(setTimeline).catch(console.error)
+    ]).finally(() => setLoading(false))
     getDiscussions(repoId, page).then(setDiscussions).catch(console.error)
   }, [repoId, page])
  
@@ -33,25 +34,14 @@ export default function DiscussionsPanel({ repoId, syncStatus }: Props) {
     { category: 'General', count: 8, percentage: 13, color: 'bg-slate-400' },
   ]
  
-  // Simulated activity timeline data
-  const activityData = [
-    { date: 'Dec 25', activity: 12 },
-    { date: 'Jan 25', activity: 22 },
-    { date: 'Feb 25', activity: 18 },
-    { date: 'Mar 25', activity: 38 },
-    { date: 'Apr 25', activity: 48 },
-    { date: 'May 25', activity: 45 },
-  ]
- 
+  // Use real timeline data or empty array
+  const activityData = timeline?.timeline && timeline.timeline.length > 0 
+    ? timeline.timeline 
+    : []
+
   return (
     <div className="space-y-6">
- 
-      {summary?.total_discussions === 0 && !loading && (
-        <div className="rounded-2xl border border-amber-200 dark:border-amber-900/30 bg-amber-50/30 dark:bg-amber-950/10 p-5 text-amber-800 dark:text-amber-300 text-sm">
-          No discussions found. Discussions may not be enabled for this repository.
-        </div>
-      )}
- 
+
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
@@ -85,21 +75,27 @@ export default function DiscussionsPanel({ repoId, syncStatus }: Props) {
             <p className="text-[10px] text-muted font-semibold">Active threads timeline over time</p>
           </div>
           
-          <ResponsiveContainer width="100%" height={180}>
-            <AreaChart data={activityData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-              <defs>
-                <linearGradient id="discGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
-              <XAxis dataKey="date" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-              <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
-              <Area type="monotone" dataKey="activity" name="Discussions" stroke="#6366f1" strokeWidth={2.5} fill="url(#discGrad)" />
-            </AreaChart>
-          </ResponsiveContainer>
+          {activityData.length === 0 ? (
+            <div className="h-[180px] flex items-center justify-center text-sm text-muted">
+              No discussion data available
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={activityData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="discGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
+                <XAxis dataKey="date" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <Area type="monotone" dataKey="activity" name="Discussions" stroke="#6366f1" strokeWidth={2.5} fill="url(#discGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
  
         {/* Topic Trends */}
@@ -123,9 +119,9 @@ export default function DiscussionsPanel({ repoId, syncStatus }: Props) {
             ))}
           </div>
         </div>
- 
+
       </div>
- 
+
       {/* Discussion list */}
       <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
         <h3 className="text-sm font-bold text-primary mb-4">Discussions Workspace</h3>

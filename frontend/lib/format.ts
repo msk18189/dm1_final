@@ -41,12 +41,23 @@ export function formatDurationFromDays(days?: number | null): { value: string | 
 
 export function severityColor(severity: string): string {
   switch (severity) {
+    case 'critical':
+      return 'border-palette-rose/50 bg-palette-rose-light dark:bg-palette-rose-light/20 dark:border-palette-rose/30'
+    case 'stale':
+      return 'border-palette-amber/40 bg-palette-amber-light dark:bg-palette-amber-light/20 dark:border-palette-amber/30'
+    case 'warning':
+      return 'border-palette-orange/35 bg-palette-orange-light dark:bg-palette-orange-light/20 dark:border-palette-orange/30'
+    case 'healthy':
+      return 'border-palette-emerald/35 bg-palette-emerald-light dark:bg-palette-emerald-light/20 dark:border-palette-emerald/30'
+    // Legacy support for old severity levels
     case 'high':
-      return 'border-palette-rose/40 bg-palette-rose-light'
+      return 'border-palette-rose/50 bg-palette-rose-light dark:bg-palette-rose-light/20 dark:border-palette-rose/30'
     case 'medium':
-      return 'border-palette-amber/40 bg-palette-amber-light'
+      return 'border-palette-amber/40 bg-palette-amber-light dark:bg-palette-amber-light/20 dark:border-palette-amber/30'
+    case 'low':
+      return 'border-palette-emerald/35 bg-palette-emerald-light dark:bg-palette-emerald-light/20 dark:border-palette-emerald/30'
     default:
-      return 'border-palette-lime/40 bg-palette-lime-light'
+      return 'border-palette-emerald/35 bg-palette-emerald-light dark:bg-palette-emerald-light/20 dark:border-palette-emerald/30'
   }
 }
 

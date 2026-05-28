@@ -100,7 +100,12 @@ export default function StalePRAlerts({
                     #{alert.number} — {alert.title}
                   </p>
                   <p className="text-xs text-secondary mt-1 font-medium">
-                    {alert.author} · {alert.age_days} days open · <span className="capitalize font-bold text-primary">{alert.severity}</span> priority
+                    {alert.author} · {alert.age_days} days inactive · <span className={`uppercase font-bold tracking-wide ${
+                      alert.severity === 'critical' ? 'text-palette-rose' :
+                      alert.severity === 'stale' ? 'text-palette-amber' :
+                      alert.severity === 'warning' ? 'text-palette-orange' :
+                      'text-palette-emerald'
+                    }`}>{alert.severity}</span>
                   </p>
                 </div>
               </div>

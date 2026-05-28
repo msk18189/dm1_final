@@ -1,7 +1,7 @@
 'use client'
  
 import { useState, useEffect } from 'react'
-import { GitFork, Star, Clock, Activity, TrendingUp, Globe, Users, Heart } from 'lucide-react'
+import { GitFork, Star, Clock, Activity, TrendingUp, Users, Heart } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { getForksAnalytics, getForks } from '@/lib/api'
@@ -27,15 +27,6 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
  
   const summary = analytics?.summary
   const growth = analytics?.growth_trend ?? []
- 
-  // Simulated geographic distribution for enterprise dashboard storytelling
-  const geoData = [
-    { country: 'United States', percentage: 42, count: 52 },
-    { country: 'Europe (EU)', percentage: 28, count: 35 },
-    { country: 'India', percentage: 15, count: 18 },
-    { country: 'China', percentage: 10, count: 12 },
-    { country: 'Others', percentage: 5, count: 6 },
-  ]
  
   return (
     <div className="space-y-6">
@@ -64,10 +55,10 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
       </div>
  
       {/* Growth Trend & Geographic distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         
         {/* Fork Growth Trend (Area Chart) */}
-        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4">
             <h3 className="text-sm font-bold text-primary">Fork Growth Trend</h3>
             <p className="text-[10px] text-muted font-semibold">Growth metrics: new forks created per month</p>
@@ -92,31 +83,6 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
           ) : (
             <div className="h-[200px] flex items-center justify-center text-xs text-muted">No trend data available</div>
           )}
-        </div>
- 
-        {/* Geographic Distribution list */}
-        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
-              <Globe className="h-4 w-4 text-muted" />
-              <h3 className="text-sm font-bold text-primary">Geographical Contributions</h3>
-            </div>
-            <p className="text-[10px] text-muted font-semibold">Fork distribution by region</p>
-          </div>
- 
-          <div className="space-y-3 mt-4">
-            {geoData.map((item) => (
-              <div key={item.country} className="space-y-1">
-                <div className="flex justify-between text-[11px] font-semibold text-secondary">
-                  <span>{item.country}</span>
-                  <span className="font-bold text-primary">{item.percentage}% ({item.count})</span>
-                </div>
-                <div className="h-1.5 bg-background rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${item.percentage}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
  
       </div>

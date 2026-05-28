@@ -354,13 +354,75 @@ export default function AppShell({
                 <span>Last sync</span>
                 <span className="font-semibold text-primary">
                   {syncStatus.last_successful_sync
-                    ? new Date(syncStatus.last_successful_sync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    ? (() => {
+                        // Ensure ISO string has 'Z' suffix for UTC parsing
+                        let isoStr = syncStatus.last_successful_sync
+                        if (!isoStr.endsWith('Z') && !isoStr.includes('+')) {
+                          isoStr += 'Z'
+                        }
+                        
+                        const lastSync = new Date(isoStr)
+                        const now = new Date()
+                        const diffMs = now.getTime() - lastSync.getTime()
+                        const diffMinutes = Math.floor(diffMs / 60000)
+                        const diffHours = Math.floor(diffMinutes / 60)
+                        const diffDays = Math.floor(diffHours / 24)
+                        
+                        // Format in local timezone using toLocaleString
+                        const timeStr = lastSync.toLocaleString('en-US', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: true
+                        })
+                        
+                        let relativeStr = ''
+                        if (diffMinutes < 1) {
+                          relativeStr = 'just now'
+                        } else if (diffMinutes < 60) {
+                          relativeStr = `${diffMinutes}m ago`
+                        } else if (diffHours < 24) {
+                          relativeStr = `${diffHours}h ago`
+                        } else if (diffDays < 7) {
+                          relativeStr = `${diffDays}d ago`
+                        } else {
+                          relativeStr = lastSync.toLocaleDateString('en-US')
+                        }
+                        
+                        return `${timeStr} (${relativeStr})`
+                      })()
                     : 'Never'}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>Next Sync</span>
-                <span className="font-semibold text-primary">In 59 minutes</span>
+                <span className="font-semibold text-primary">
+                  {syncStatus.next_sync_at
+                    ? (() => {
+                        // Ensure ISO string has 'Z' suffix for UTC parsing
+                        let isoStr = syncStatus.next_sync_at
+                        if (!isoStr.endsWith('Z') && !isoStr.includes('+')) {
+                          isoStr += 'Z'
+                        }
+                        
+                        const nextSync = new Date(isoStr)
+                        const now = new Date()
+                        const diffMs = nextSync.getTime() - now.getTime()
+                        
+                        if (diffMs <= 0) {
+                          return 'In progress'
+                        }
+                        
+                        const diffMinutes = Math.floor(diffMs / 60000)
+                        const diffHours = Math.floor(diffMinutes / 60)
+                        
+                        if (diffHours >= 1) {
+                          return `In ${diffHours}h ${diffMinutes % 60}m`
+                        }
+                        return `In ${diffMinutes}m`
+                      })()
+                    : 'Not scheduled'}
+                </span>
               </div>
             </div>
             {onSync && (
@@ -471,22 +533,6 @@ export default function AppShell({
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Search Input */}
-            <div className="relative hidden md:block w-48 lg:w-60">
-              <Search className="absolute left-2.5 top-1.5 h-3.5 w-3.5 text-muted" />
-              <input
-                type="text"
-                placeholder="Search resources..."
-                className="w-full pl-8 pr-3 py-1 rounded-lg border border-border bg-surface-soft text-xs text-primary placeholder-muted focus:outline-none focus:border-indigo-500 focus:bg-surface transition"
-              />
-            </div>
-
-            {/* Date Range Picker */}
-            <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-secondary shadow-sm">
-              <Calendar className="h-3.5 w-3.5 text-muted" />
-              <span>Apr 26 - May 26, 2025</span>
-            </div>
-
             {/* Bell/Notifications */}
             <button
               type="button"

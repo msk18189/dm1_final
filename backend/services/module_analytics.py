@@ -617,6 +617,36 @@ class DiscussionAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
+    def get_activity_timeline(self, repo_id: int) -> Dict[str, Any]:
+        """Get discussion activity over time (monthly distribution)."""
+        from datetime import datetime, timedelta
+        
+        discussions = self.db.query(Discussion).filter(
+            Discussion.repo_id == repo_id,
+            Discussion.created_at != None
+        ).order_by(Discussion.created_at).all()
+        
+        if not discussions:
+            return {"timeline": []}
+        
+        # Group by month
+        activity_by_month = {}
+        for disc in discussions:
+            month_key = disc.created_at.strftime('%b %y')
+            activity_by_month[month_key] = activity_by_month.get(month_key, 0) + 1
+        
+        # Sort chronologically and format
+        from datetime import datetime as dt
+        sorted_months = sorted(activity_by_month.items(), 
+                              key=lambda x: dt.strptime(x[0], '%b %y'))
+        
+        timeline = [
+            {"date": month, "activity": count}
+            for month, count in sorted_months
+        ]
+        
+        return {"timeline": timeline}
+
 
 # ---------------------------------------------------------------------------
 # MODULE 7 — Project Analytics
