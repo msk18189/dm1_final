@@ -683,6 +683,7 @@ function DashboardContent() {
               prRiskPage={prRiskPage} onPRRiskPage={setPRRiskPage}
               staleAlertsPage={staleAlertsPage} onStaleAlertsPage={setStaleAlertsPage}
               syncStatus={syncStatus}
+              onRefreshRisk={() => loadTableData(repoId, filters, oldestPage, slowestPage, contributorsPage, prRiskPage, staleAlertsPage)}
             />
           )}
 
@@ -787,20 +788,51 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
     },
   ]
 
-  // Main 6 metrics grid — all values from real API data, no fake fallbacks
   const mainKPIs = [
-    { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs ? formatTelemetry(kpi.total_prs, 0) : '—'), sub: 'All time', icon: <FolderGit2 className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? 0}%` : '—', sub: 'of closed PRs', icon: <GitMerge className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', sub: '↓ 12% vs prev 30 days', icon: <Clock className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_wait_for_review)) : '—', sub: '↑ 8% vs prev 30 days', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_review_duration)) : '—', sub: '↓ 5% vs prev 30 days', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Stale PRs', value: kpi?.stale_prs ?? 20, sub: '> 30 days old', icon: <AlertOctagon className="h-4 w-4 text-rose-500" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Total PRs', value: syncStatus ? formatTelemetry(syncStatus.synced_prs || syncStatus.total_prs, syncStatus.expected_prs) : (kpi?.total_prs != null ? formatTelemetry(kpi.total_prs, 0) : '—'), sub: 'All time', icon: <FolderGit2 className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Merge Rate', value: kpi ? `${kpi.merge_rate ?? '—'}%` : '—', sub: 'of closed PRs', icon: <GitMerge className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Cycle Time', value: kpi ? renderDuration(formatDurationFromDays(kpi.avg_cycle_time)) : '—', sub: 'Merged PRs', icon: <Clock className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Wait', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review)) : '—', sub: 'Time to first review', icon: <Eye className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Avg Review Duration', value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration_display, kpi.avg_review_duration)) : '—', sub: 'Active review time', icon: <MessageSquare className="h-4 w-4" />, onClick: () => onNavigate('pull_requests') },
-    { label: 'Stale PRs', value: kpi?.stale_prs ?? '—', sub: '> 30 days old', icon: <AlertOctagon className="h-4 w-4 text-rose-500" />, onClick: () => onNavigate('pull_requests') },
+    {
+      label: 'Total PRs',
+      value: syncStatus
+        ? formatTelemetry(syncStatus.synced_prs ?? syncStatus.total_prs, syncStatus.expected_prs)
+        : (kpi?.total_prs != null ? formatTelemetry(kpi.total_prs, 0) : '—'),
+      sub: 'All time',
+      icon: <FolderGit2 className="h-4 w-4" />,
+      onClick: () => onNavigate('pull_requests')
+    },
+    {
+      label: 'Merge Rate',
+      value: kpi?.merge_rate != null ? `${kpi.merge_rate}%` : '—',
+      sub: 'of closed PRs',
+      icon: <GitMerge className="h-4 w-4" />,
+      onClick: () => onNavigate('pull_requests')
+    },
+    {
+      label: 'Avg Cycle Time',
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time)) : '—',
+      sub: 'Merged PRs',
+      icon: <Clock className="h-4 w-4" />,
+      onClick: () => onNavigate('pull_requests')
+    },
+    {
+      label: 'Avg Review Wait',
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review)) : '—',
+      sub: 'Time to first review',
+      icon: <Eye className="h-4 w-4" />,
+      onClick: () => onNavigate('pull_requests')
+    },
+    {
+      label: 'Avg Review Duration',
+      value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration_display, kpi.avg_review_duration)) : '—',
+      sub: 'Active review time',
+      icon: <MessageSquare className="h-4 w-4" />,
+      onClick: () => onNavigate('pull_requests')
+    },
+    {
+      label: 'Stale PRs',
+      value: kpi?.stale_prs != null ? kpi.stale_prs : '—',
+      sub: '> 30 days old',
+      icon: <AlertOctagon className="h-4 w-4 text-rose-500" />,
+      onClick: () => onNavigate('pull_requests')
+    },
   ]
 
   // Contributor activity formatted
@@ -1088,7 +1120,7 @@ function PullRequestsSection({
   oldestPage, onOldestPage, slowestPage, onSlowestPage,
   contributorsPage, onContributorsPage, prRiskPage, onPRRiskPage,
   staleAlertsPage, onStaleAlertsPage,
-  syncStatus,
+  syncStatus, onRefreshRisk,
 }: any) {
   const [localFilters, setLocalFilters] = useState(filters)
 
@@ -1189,7 +1221,7 @@ function PullRequestsSection({
       </div>
 
       {/* PR Lifecycle donut & bottlenecks list */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         
         {/* PR Lifecycle Flow - Donut chart */}
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
@@ -1290,33 +1322,92 @@ function PullRequestsSection({
       </div>
 
       {/* PR Risk & Stale Alerts */}
-      {prRisk && (
-        <PRRiskPanel data={prRisk} page={prRiskPage} onPageChange={onPRRiskPage} />
-      )}
+      <PRRiskPanel
+        repoId={repoId}
+        data={prRisk?.data ?? []}
+        page={prRiskPage}
+        totalPages={prRisk?.pages}
+        totalResults={prRisk?.total}
+        onPageChange={onPRRiskPage}
+        onRefreshed={onRefreshRisk}
+      />
       {staleAlerts && (
-        <StalePRAlerts data={staleAlerts} page={staleAlertsPage} onPageChange={onStaleAlertsPage} />
+        <StalePRAlerts
+          data={staleAlerts.data ?? []}
+          page={staleAlertsPage}
+          totalPages={staleAlerts.pages}
+          totalResults={staleAlerts.total}
+          onPageChange={onStaleAlertsPage}
+        />
       )}
 
       {/* Main Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {oldestPRs && (
-          <DataTable
-            title="Oldest Open PRs"
-            icon={<Clock className="h-4.5 w-4.5 text-orange-500" />}
-            columns={['PR', 'Title', 'Author', 'Age', 'Reviews']}
-            data={oldestPRs?.data ?? []}
-            page={oldestPage} pages={oldestPRs?.pages ?? 1}
-            onPageChange={onOldestPage}
-            renderRow={(row: any) => (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2 shrink-0">
+              <div className="flex items-center gap-2 text-primary">
+                <Clock className="h-4.5 w-4.5 text-orange-500" />
+                <h3 className="section-title text-primary">Oldest Open PRs</h3>
+              </div>
+            </div>
+
+            {oldestPRs?.data?.length === 0 ? (
+              <div className="flex-1 flex flex-col justify-center items-center py-10">
+                <p className="text-sm text-muted">No data available</p>
+              </div>
+            ) : (
               <>
-                <td className="px-4 py-2.5 font-mono text-muted text-xs">#{row.number}</td>
-                <td className="px-4 py-2.5 text-primary text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
-                <td className="px-4 py-2.5 text-secondary text-xs">{row.author}</td>
-                <td className="px-4 py-2.5 text-secondary text-xs font-bold">{row.age_days}d</td>
-                <td className="px-4 py-2.5 text-secondary text-xs">{row.review_count}</td>
+                <div className="overflow-y-auto overflow-x-auto max-h-[640px] rounded-xl border border-border" style={{ minHeight: '420px' }}>
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-surface-soft/95 backdrop-blur z-10">
+                      <tr className="border-b border-border">
+                        {['PR', 'Title', 'Author', 'Age', 'Reviews'].map((col) => (
+                          <th key={col} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-secondary">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="align-top">
+                      {oldestPRs.data.map((row: any, idx: number) => (
+                        <tr key={idx} className="border-b border-border-muted transition hover:bg-bg-hover/40">
+                          <td className="px-4 py-2.5 font-mono text-muted text-xs">#{row.number}</td>
+                          <td className="px-4 py-2.5 text-primary text-xs font-medium max-w-[220px] truncate" title={row.title}>{row.title}</td>
+                          <td className="px-4 py-2.5 text-secondary text-xs">{row.author}</td>
+                          <td className="px-4 py-2.5 text-secondary text-xs font-bold">{row.age_days}d</td>
+                          <td className="px-4 py-2.5 text-secondary text-xs">{row.review_count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {oldestPRs?.pages && oldestPRs.pages > 1 && (
+                  <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+                    <button
+                      onClick={() => onOldestPage(Math.max(1, oldestPage - 1))}
+                      disabled={oldestPage <= 1}
+                      className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-bg-hover hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs text-secondary">
+                      Page <span className="font-semibold text-primary">{oldestPage}</span> of{' '}
+                      <span className="font-semibold text-primary">{oldestPRs.pages}</span>
+                    </span>
+                    <button
+                      onClick={() => onOldestPage(Math.min(oldestPRs.pages, oldestPage + 1))}
+                      disabled={oldestPage >= oldestPRs.pages}
+                      className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-secondary transition hover:bg-bg-hover hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </>
             )}
-          />
+          </motion.div>
         )}
         {slowestPRs && (
           <DataTable

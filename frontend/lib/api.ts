@@ -195,6 +195,26 @@ export const getStaleAlerts = async (repoId: number, page = 1, limit = 10) => {
   return response.data
 }
 
+export const getMLStatus = async (repoId: number) => {
+  const response = await api.get(`/api/ml-status/${repoId}`)
+  return response.data as {
+    open_prs: number
+    prs_with_predictions: number
+    models_exist: boolean
+    ready: boolean
+    reasons: string[]
+  }
+}
+
+export const refreshMLPredictions = async (repoId: number) => {
+  const response = await api.post(`/api/refresh-ml/${repoId}`)
+  return response.data as {
+    refreshed: number
+    models_exist: boolean
+    reason: string
+  }
+}
+
 // ─── Module 2: Issues ────────────────────────────────────────────────────
 
 export const getIssues = async (repoId: number, page = 1, limit = 20, state = 'all', label?: string, search?: string, sort = 'created_at', sortDir = 'desc') => {

@@ -353,6 +353,11 @@ def sync_pull_requests(
         PullRequest.repo_id == repo.id
     ).count()
 
+    # Keep synced_prs in sync with the authoritative DB count.
+    # (During incremental syncs we only increment on inserts, which can under-
+    # count if updates were processed.  Reset here to match total_prs.)
+    repo.synced_prs = repo.total_prs
+
     db.commit()
 
     print(f"[Telemetry][PRs] Sync complete. Stats: fetched={records_fetched}, inserted={records_inserted}, updated={records_updated}, skipped={records_skipped}, api_responses={api_response_count}")

@@ -41,7 +41,6 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
   const summary = analytics?.summary
   const velocity = analytics?.velocity || []
  
-  // Dynamic calculations for priority donut chart
   const priorityData = analytics?.priority || [
     { name: 'Critical', value: 0, color: '#ef4444' },
     { name: 'High', value: 0, color: '#f97316' },
@@ -165,10 +164,16 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
             </div>
             {/* Calendar grids */}
             <div className="grid grid-rows-7 gap-1 grid-flow-col" style={{ gridTemplateColumns: 'repeat(53, minmax(0, 1fr))' }}>
-              {(analytics?.heatmap || Array.from({ length: 371 }).fill(0)).map((level: any, i: number) => {
+              {(analytics?.heatmap || Array.from({ length: 371 }).fill(0)).map((entry: any, i: number) => {
+                const count = typeof entry === 'number' ? entry : (entry?.count ?? 0)
+                let level = 0
+                if (count >= 6) level = 4
+                else if (count >= 4) level = 3
+                else if (count >= 2) level = 2
+                else if (count >= 1) level = 1
                 const levels = ['bg-slate-100', 'bg-emerald-200', 'bg-emerald-300', 'bg-emerald-500', 'bg-emerald-700']
                 return (
-                  <div key={i} className={`h-2 w-2 rounded-sm ${levels[level] || 'bg-slate-100'}`} />
+                  <div key={i} className={`h-2 w-2 rounded-sm ${levels[level]}`} />
                 )
               })}
             </div>
@@ -270,7 +275,12 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
             <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
               className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-secondary transition hover:bg-bg-hover disabled:pointer-events-none disabled:opacity-40">&larr; Prev</button>
-            <span className="text-xs text-secondary">Page <span className="font-bold text-primary">{page}</span> of <span className="font-bold text-primary">{(tab === 'All Issues' ? issues : stale)?.pages}</span></span>
+            <span className="text-xs text-secondary">
+              Page <span className="font-bold text-primary">{page}</span> of <span className="font-bold text-primary">{(tab === 'All Issues' ? issues : stale)?.pages}</span>
+              {(tab === 'All Issues' ? issues : stale)?.total != null && (
+                <span className="ml-2 text-muted">({(tab === 'All Issues' ? issues : stale)?.total.toLocaleString()} total)</span>
+              )}
+            </span>
             <button disabled={page >= (tab === 'All Issues' ? issues : stale)?.pages} onClick={() => setPage(p => p + 1)}
               className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-secondary transition hover:bg-bg-hover disabled:pointer-events-none disabled:opacity-40">Next &rarr;</button>
           </div>

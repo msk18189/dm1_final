@@ -30,7 +30,7 @@ export default function DataTable({
   const totalPages = pages
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card card-hover card-glow flex flex-col">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
         <div className="flex items-center gap-2 text-primary">
           {icon}
@@ -47,7 +47,7 @@ export default function DataTable({
         <p className="py-10 text-center text-sm text-muted">{emptyMessage}</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-xl border border-border">
+          <div className="overflow-y-auto overflow-x-auto max-h-[640px] rounded-xl border border-border" style={{ minHeight: '420px' }}>
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border bg-surface-soft/50">
@@ -61,7 +61,7 @@ export default function DataTable({
                   ))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="align-top">
                 {data.map((row, idx) => (
                   <tr
                     key={idx}
@@ -75,7 +75,7 @@ export default function DataTable({
           </div>
 
           {totalPages !== undefined && onPageChange && totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
               <button
                 onClick={() => onPageChange(Math.max(1, page - 1))}
                 disabled={page <= 1}

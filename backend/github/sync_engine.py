@@ -577,6 +577,18 @@ def run_sync_in_background(repo_url: str, github_token: Optional[str] = None, sy
         except Exception as e:
             print(f"[SyncEngine] Post-sync analytics update failed: {e}")
 
+        try:
+            from services.data_processor import DataProcessor as DP
+            ml_processor = DP(db)
+            if ml_processor._get_ml_models():
+                print(f"[SyncEngine] Running ML inference for repo {owner}/{repo_name}...")
+                count = ml_processor.refresh_ml_predictions(repo_id=repo.id, only_open_prs=True)
+                print(f"[SyncEngine] ML inference complete: {count} prediction(s) generated.")
+            else:
+                print("[SyncEngine] ML models unavailable — skipping post-sync inference.")
+        except Exception as e:
+            print(f"[SyncEngine] Post-sync ML inference failed (non-fatal): {e}")
+
     except Exception as e:
         print(f"[SyncEngine] Background sync error for {repo_url}: {e}")
     finally:

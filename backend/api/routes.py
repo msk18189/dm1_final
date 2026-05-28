@@ -558,6 +558,81 @@ def get_pr_risk(repo_id: int, page: int = 1, limit: int = 15, db: Session = Depe
     return ext.get_pr_risk_panel(repo_id, page=page, limit=limit)
 
 
+@router.post("/api/refresh-ml/{repo_id}")
+def refresh_ml_predictions(repo_id: int, db: Session = Depends(get_db)):
+    """Trigger ML inference for all open PRs of a repository.
+
+    Runs synchronously in the request thread. Returns the count of PRs
+    that received new predictions.  Safe to call after a re-sync or
+    manually from the Settings panel.
+    """
+    from database.models import MLPrediction
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    try:
+        processor = DataProcessor(db)
+        ml_models = processor._get_ml_models()
+        if not ml_models:
+            return {
+                "refreshed": 0,
+                "reason": "ML models unavailable — no .pkl files found.",
+                "models_exist": False,
+            }
+        count = processor.refresh_ml_predictions(repo_id=repo_id, only_open_prs=True)
+        return {
+            "refreshed": count,
+            "models_exist": True,
+            "reason": f"Refreshed {count} open PR prediction(s) successfully.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ML refresh failed: {str(e)}")
+
+
+@router.get("/api/ml-status/{repo_id}")
+def get_ml_status(repo_id: int, db: Session = Depends(get_db)):
+    """Return ML readiness diagnostics for a repository.
+
+    Used by the frontend to render informative empty-state messages
+    in the PR Risk & Delay Predictions panel.
+    """
+    from database.models import MLPrediction, PullRequest as PR
+    from ml.models import MLModels
+
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    open_prs = db.query(PR).filter(PR.repo_id == repo_id, PR.state == "OPEN").count()
+    prs_with_predictions = (
+        db.query(PR)
+        .join(MLPrediction, PR.id == MLPrediction.pr_id)
+        .filter(PR.repo_id == repo_id, PR.state == "OPEN")
+        .count()
+    )
+
+    ml_models = MLModels()
+    models_exist = ml_models.models_exist()
+
+    reasons = []
+    if not models_exist:
+        reasons.append("ML model files not found — run training first.")
+    if open_prs == 0:
+        reasons.append("No open PRs in this repository.")
+    elif prs_with_predictions == 0 and models_exist:
+        reasons.append("Models loaded but no predictions stored yet — try refreshing ML.")
+
+    return {
+        "open_prs": open_prs,
+        "prs_with_predictions": prs_with_predictions,
+        "models_exist": models_exist,
+        "ready": prs_with_predictions > 0,
+        "reasons": reasons,
+    }
+
+
+
 @router.get("/api/stale-alerts/{repo_id}")
 def get_stale_alerts(
     repo_id: int,
@@ -594,9 +669,8 @@ def get_issues_analytics(repo_id: int, db: Session = Depends(get_db)):
     return {
         "summary": ia.get_summary(repo_id),
         "velocity": ia.get_resolution_velocity(repo_id),
-        "heatmap": ia.get_heatmap(repo_id),
-        "priority": ia.get_priority_distribution(repo_id),
         "heatmap": ia.get_issue_heatmap(repo_id),
+        "priority": ia.get_priority_distribution(repo_id),
     }
 
 
@@ -904,13 +978,42 @@ def compare_repositories_get(
     url_a: str, url_b: str, github_token: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Compare two repositories side by side."""
+    """Compare two repositories side by side using already-synced data.
+
+    Both repositories must have been previously synced via the /api/analyze
+    endpoint. This endpoint does NOT trigger a new sync; it only reads from
+    the database to avoid running the legacy PR-only DataProcessor.
+    """
     try:
-        processor = DataProcessor(db)
-        token = (github_token or "").strip() or None
-        result_a = processor.process_repository(url_a, github_token=token)
-        result_b = processor.process_repository(url_b, github_token=token)
+        from services.data_processor import parse_github_repo_url, normalize_github_url
+        owner_a, name_a = parse_github_repo_url(url_a)
+        owner_b, name_b = parse_github_repo_url(url_b)
+
+        repo_a = db.query(Repository).filter(
+            Repository.owner == owner_a,
+            Repository.name == name_a,
+        ).first()
+        repo_b = db.query(Repository).filter(
+            Repository.owner == owner_b,
+            Repository.name == name_b,
+        ).first()
+
+        if not repo_a:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository '{owner_a}/{name_a}' has not been synced yet. "
+                       "Please sync it via the Analyze page first."
+            )
+        if not repo_b:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository '{owner_b}/{name_b}' has not been synced yet. "
+                       "Please sync it via the Analyze page first."
+            )
+
         ext = ExtendedAnalytics(db)
-        return ext.compare_repos(result_a["repo_id"], result_b["repo_id"])
+        return ext.compare_repos(repo_a.id, repo_b.id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

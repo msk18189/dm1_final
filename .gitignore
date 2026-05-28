@@ -41,7 +41,6 @@ __pycache__/
 .env
 .env.local
 .env.*
-
 backend/.env
 backend/.env.local
 

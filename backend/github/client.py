@@ -526,11 +526,8 @@ class GitHubClient:
         cursor = variables.get("cursor")
 
         if "pullRequests" in query:
-            # Return paginated PRs
             if not cursor:
-                # Page 1: PRs 150 down to 101
                 nodes = []
-                # PR #150 is fresh
                 now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
                 nodes.append({
                     "number": 150,
@@ -1172,7 +1169,6 @@ class GitHubRestClient:
                 print(f"[Estimate] Error fetching discussions count: {e}")
 
         import math
-        # Formulas for estimated requests
         est_prs_rest = math.ceil(pr_count / 100) + pr_count * 3
         est_issues_rest = math.ceil(issues_count / 100)
         est_forks_rest = math.ceil(forks_count / 100)

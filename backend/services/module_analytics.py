@@ -96,9 +96,9 @@ class IssueAnalytics:
 
         sort_col = getattr(Issue, sort, Issue.created_at)
         if sort_dir == "desc":
-            query = query.order_by(desc(sort_col))
+            query = query.order_by(desc(sort_col), desc(Issue.id))
         else:
-            query = query.order_by(asc(sort_col))
+            query = query.order_by(asc(sort_col), asc(Issue.id))
 
         issues = query.offset((page - 1) * limit).limit(limit).all()
 
@@ -175,9 +175,9 @@ class IssueAnalytics:
             
         sort_col = getattr(Issue, sort, Issue.created_at)
         if sort_dir == "desc":
-            query = query.order_by(desc(sort_col))
+            query = query.order_by(desc(sort_col), desc(Issue.id))
         else:
-            query = query.order_by(asc(sort_col))
+            query = query.order_by(asc(sort_col), asc(Issue.id))
 
         total = query.count()
         issues = query.offset((page - 1) * limit).limit(limit).all()
@@ -684,7 +684,7 @@ class RepoHealthAnalytics:
             stale_rate = stale_prs / max(open_prs, 1)
             pr_score = max(0, 20 - int(stale_rate * 20))
         else:
-            pr_score = 10  # neutral
+            pr_score = 0  # No PR data yet — do not award neutral points
         scores["pull_requests"] = pr_score
 
         # CI health (25 pts)
@@ -699,7 +699,7 @@ class RepoHealthAnalytics:
             success_rate = successful / max(recent_runs, 1)
             ci_score = int(success_rate * 25)
         else:
-            ci_score = 10  # neutral
+            ci_score = 0  # No CI data yet — do not award neutral points
         scores["ci_cd"] = ci_score
 
         # Branch health (15 pts)
@@ -709,7 +709,7 @@ class RepoHealthAnalytics:
             stale_rate = stale_branches / total_branches
             branch_score = max(0, 15 - int(stale_rate * 15))
         else:
-            branch_score = 8
+            branch_score = 0  # No branch data yet
         scores["branches"] = branch_score
 
         # Issue health (20 pts)
@@ -721,7 +721,7 @@ class RepoHealthAnalytics:
             stale_rate = stale_issues / max(open_issues, 1)
             issue_score = max(0, 20 - int(stale_rate * 20))
         else:
-            issue_score = 10
+            issue_score = 0  # No issue data yet
         scores["issues"] = issue_score
 
         # Community health: discussions + forks (10 pts)
@@ -737,11 +737,22 @@ class RepoHealthAnalytics:
         total_score = sum(scores.values())
         grade = _score_grade(total_score)
 
+        # Expose which modules had real data so the frontend can mark incomplete modules
+        data_available = {
+            "pull_requests": total_prs > 0,
+            "ci_cd": total_runs > 0,
+            "branches": total_branches > 0,
+            "issues": total_issues > 0,
+            "community": has_discussions or has_forks,
+            "visibility": True,
+        }
+
         return {
             "score": total_score,
             "max_score": 100,
             "grade": grade,
             "components": scores,
+            "data_available": data_available,
             "visibility": repo.visibility,
             "sync_status": repo.sync_status,
             "last_synced": repo.last_synced_at.isoformat() if repo.last_synced_at else None,

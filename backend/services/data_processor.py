@@ -439,67 +439,113 @@ class DataProcessor:
         return refreshed
 
     def _generate_predictions_safe(self, pr: PullRequest, parsed_pr: Dict):
-        """Generate ML predictions safely - won't crash if ML fails"""
+        """Generate ML predictions safely - won't crash if ML fails.
+
+        Feature engineering reads from both parsed_pr (fresh API values) and
+        the pr ORM object (already committed values), preferring parsed_pr.
+        Timezone-aware age computation is always applied regardless of PR state.
+        """
         try:
             ml_models = self._get_ml_models()
             if not ml_models:
                 print(f"[ML SKIP] Skipping ML predictions for PR {pr.pr_number}")
                 return
-            
+
             # Prepare features with validation
             try:
-                delay_features = [
-                    float(parsed_pr.get("files_changed", 0) or 0),
-                    float(parsed_pr.get("commit_count", 0) or 0),
-                    float(parsed_pr.get("review_count", 0) or 0),
-                    float(parsed_pr.get("lines_added", 0) or 0),
-                    float(parsed_pr.get("lines_deleted", 0) or 0),
-                    float(parsed_pr.get("reviewer_count", 0) or 0),
-                ]
-                
-                # Calculate age safely
-                from datetime import timezone
-                now = datetime.now(timezone.utc)
-                age_days = (now - pr.created_at).days if pr.state == "OPEN" else 0
-                
-                bottleneck_features = [
-                    float(parsed_pr.get("wait_for_review_hours", 0) or 0),
-                    float(parsed_pr.get("review_duration_hours", 0) or 0),
-                    float(parsed_pr.get("comment_count", 0) or 0),
-                    float(parsed_pr.get("commit_count", 0) or 0),
-                    float(age_days),
-                ]
-                
-                risk_features = [
-                    float(parsed_pr.get("change_request_count", 0) or 0),
-                    float(parsed_pr.get("review_count", 0) or 0),
-                    float(parsed_pr.get("files_changed", 0) or 0),
-                    float((parsed_pr.get("lines_added", 0) or 0) + (parsed_pr.get("lines_deleted", 0) or 0)),
-                    0.5,
-                ]
-                
-                review_wait_features = [
-                    float(parsed_pr.get("reviewer_count", 0) or 0),
-                    1.0,
-                    float(parsed_pr.get("files_changed", 0) or 0),
-                    0.0,
-                    1.0,
-                ]
-                
-                # Generate predictions
-                predicted_delay = ml_models.predict_delay(delay_features)
-                bottleneck_prob = ml_models.predict_bottleneck(bottleneck_features)
-                risk_score = ml_models.predict_risk(risk_features)
-                predicted_review_wait = ml_models.predict_review_wait(review_wait_features)
-                
-                # Validate predictions
-                predicted_delay = float(predicted_delay) if predicted_delay else 0.0
-                bottleneck_prob = float(bottleneck_prob) if bottleneck_prob else 0.0
-                risk_score = float(risk_score) if risk_score else 0.0
-                predicted_review_wait = float(predicted_review_wait) if predicted_review_wait else 0.0
+                # ── Age computation (timezone-safe) ──────────────────────────
+                from datetime import timezone as _tz
+                now = datetime.now(_tz.utc)
+                pr_created = pr.created_at
+                if pr_created is not None:
+                    if pr_created.tzinfo is None:
+                        pr_created = pr_created.replace(tzinfo=_tz.utc)
+                    age_days = float(max(0, (now - pr_created).days))
+                else:
+                    age_days = 0.0
 
-                # Store predictions only from ML outputs.
-                # Do not replace missing ML values with heuristic estimates.
+                # ── Pull feature values: prefer parsed_pr, fallback to pr ORM ─
+                files_changed     = float(parsed_pr.get("files_changed")    or pr.files_changed    or 0)
+                commit_count      = float(parsed_pr.get("commit_count")     or pr.commit_count     or 0)
+                review_count      = float(parsed_pr.get("review_count")     or pr.review_count     or 0)
+                lines_added       = float(parsed_pr.get("lines_added")      or pr.lines_added      or 0)
+                lines_deleted     = float(parsed_pr.get("lines_deleted")    or pr.lines_deleted    or 0)
+                comment_count     = float(parsed_pr.get("comment_count")    or pr.comment_count    or 0)
+                wait_hours        = float(parsed_pr.get("wait_for_review_hours") or pr.wait_for_review_hours or 0)
+                review_dur_hours  = float(parsed_pr.get("review_duration_hours") or pr.review_duration_hours or 0)
+                # reviewer_count may come from GraphQL; fall back to review_count
+                reviewer_count    = float(parsed_pr.get("reviewer_count")   or review_count)
+
+                # ── Feature vectors (must match training schema in ml/models.py) ──
+                delay_features = [
+                    files_changed,
+                    commit_count,
+                    review_count,
+                    lines_added,
+                    lines_deleted,
+                    reviewer_count,         # position 5 — reviewer count (or review_count)
+                ]
+
+                bottleneck_features = [
+                    wait_hours,
+                    review_dur_hours,
+                    comment_count,
+                    commit_count,
+                    age_days,
+                ]
+
+                risk_features = [
+                    comment_count,
+                    review_count,
+                    files_changed,
+                    lines_added + lines_deleted,
+                    0.5,                    # constant merge-probability prior (matches training)
+                ]
+
+                review_wait_features = [
+                    review_count,
+                    1.0,                    # intercept constant (matches training)
+                    files_changed,
+                    0.0,                    # placeholder (matches training)
+                    1.0,                    # intercept constant (matches training)
+                ]
+
+                # ── Run inference ──────────────────────────────────────────────
+                predicted_delay        = ml_models.predict_delay(delay_features)
+                bottleneck_prob        = ml_models.predict_bottleneck(bottleneck_features)
+                risk_score             = ml_models.predict_risk(risk_features)
+                predicted_review_wait  = ml_models.predict_review_wait(review_wait_features)
+
+                # Convert to float; ml model methods already return 0.0 on failure.
+                predicted_delay       = float(predicted_delay)       if predicted_delay       is not None else 0.0
+                bottleneck_prob       = float(bottleneck_prob)       if bottleneck_prob       is not None else 0.0
+                risk_score            = float(risk_score)            if risk_score            is not None else 0.0
+                predicted_review_wait = float(predicted_review_wait) if predicted_review_wait is not None else 0.0
+
+                # Guard: skip storing when all outputs are effectively zero.
+                # IsolationForest sigmoid can never output exactly 0.0, so if
+                # bottleneck_prob is 0.0 the model itself failed or is absent.
+                # Use a small epsilon threshold to catch genuine untrained returns.
+                _EPSILON = 1e-6
+                all_zero = (
+                    predicted_delay       < _EPSILON and
+                    bottleneck_prob       < _EPSILON and
+                    risk_score            < _EPSILON and
+                    predicted_review_wait < _EPSILON
+                )
+                if all_zero:
+                    print(
+                        f"[ML SKIP] All-near-zero prediction for PR {pr.pr_number} "
+                        f"(delay={predicted_delay:.6f}, bottleneck={bottleneck_prob:.6f}, "
+                        f"risk={risk_score:.6f}, wait={predicted_review_wait:.6f}) "
+                        f"— model likely untrained or features all-zero. Skipping storage."
+                    )
+                    return
+
+                # ── Upsert: remove any stale prediction, then insert new one ──
+                self.db.query(MLPrediction).filter(MLPrediction.pr_id == pr.id).delete(
+                    synchronize_session=False
+                )
                 prediction = MLPrediction(
                     pr_id=pr.id,
                     repo_owner=pr.repo_owner,
@@ -510,15 +556,20 @@ class DataProcessor:
                     predicted_review_wait=predicted_review_wait,
                 )
                 self.db.add(prediction)
-                print(f"[ML] Generated predictions for PR {pr.pr_number}")
-                
+                print(
+                    f"[ML] Prediction stored for PR #{pr.pr_number}: "
+                    f"risk={risk_score:.3f} bottleneck={bottleneck_prob:.3f} "
+                    f"delay={predicted_delay:.1f}d wait={predicted_review_wait:.1f}h"
+                )
+
             except Exception as e:
                 print(f"[ML ERROR] Error preparing features for PR {pr.pr_number}: {str(e)}")
                 # Continue without predictions
-                
+
         except Exception as e:
             print(f"[ML ERROR] Error generating predictions: {str(e)}")
             # Don't crash - continue processing
+
     
     def _update_contributor_stats(self, repo_id: int, repo: Repository = None):
         """Update contributor statistics"""
