@@ -1,6 +1,7 @@
 'use client'
 
-import { Download, FileText } from 'lucide-react'
+import { useState } from 'react'
+import { Download, FileText, Loader2 } from 'lucide-react'
 import { getExportCsvUrl, getExportPdfUrl } from '@/lib/api'
 import type { DashboardFiltersState } from '@/components/DashboardFilters'
 
@@ -10,6 +11,35 @@ interface ExportButtonProps {
 }
 
 export default function ExportButton({ repoId, filters }: ExportButtonProps) {
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+  const handlePdfExport = async () => {
+    if (pdfLoading) return
+    setPdfLoading(true)
+    try {
+      const url = getExportPdfUrl(repoId, filters)
+      const res = await fetch(url)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        alert(`PDF export failed: ${err.detail || res.statusText}`)
+        return
+      }
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `prism_report_${repoId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch (e: any) {
+      alert(`PDF export error: ${e.message}`)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
@@ -23,11 +53,15 @@ export default function ExportButton({ repoId, filters }: ExportButtonProps) {
       </button>
       <button
         type="button"
-        onClick={() => window.open(getExportPdfUrl(repoId, filters), '_blank')}
-        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-indigo-700 hover:shadow-md"
+        onClick={handlePdfExport}
+        disabled={pdfLoading}
+        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-indigo-700 hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
       >
-        <FileText className="h-4 w-4" />
-        Export PDF
+        {pdfLoading
+          ? <Loader2 className="h-4 w-4 animate-spin" />
+          : <FileText className="h-4 w-4" />
+        }
+        {pdfLoading ? 'Generating PDF...' : 'Export PDF'}
       </button>
     </div>
   )

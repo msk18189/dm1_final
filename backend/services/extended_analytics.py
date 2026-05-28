@@ -120,7 +120,7 @@ class ExtendedAnalytics:
         query = get_filtered_prs_query(self.db, repo_id, filters)
         month_keys = _month_range(months)
         flow = {
-            ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0}
+            ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0, "open_at_end": 0}
             for ym in month_keys
         }
         
@@ -145,6 +145,32 @@ class ExtendedAnalytics:
                 m = _month_key(closed_at)
                 if m in flow:
                     flow[m]["closed"] += 1
+                    
+        # Calculate open_at_end for each month in month_keys
+        for ym in month_keys:
+            y, m_ = map(int, ym.split("-"))
+            if m_ == 12:
+                next_y, next_m = y + 1, 1
+            else:
+                next_y, next_m = y, m_ + 1
+            end_of_month = datetime(next_y, next_m, 1)
+            
+            open_count = 0
+            for created_at, merged_at, closed_at, state in rows:
+                if not created_at:
+                    continue
+                c_at = created_at.replace(tzinfo=None) if created_at.tzinfo else created_at
+                m_at = merged_at.replace(tzinfo=None) if merged_at and merged_at.tzinfo else merged_at
+                cl_at = closed_at.replace(tzinfo=None) if closed_at and closed_at.tzinfo else closed_at
+                
+                if c_at < end_of_month:
+                    is_merged_before = m_at and m_at < end_of_month
+                    is_closed_before = cl_at and cl_at < end_of_month and state == "CLOSED"
+                    
+                    if not is_merged_before and not is_closed_before:
+                        open_count += 1
+            flow[ym]["open_at_end"] = open_count
+            
         return [flow[ym] for ym in month_keys]
 
     def get_throughput_filtered(

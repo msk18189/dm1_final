@@ -858,57 +858,117 @@ def export_report_pdf(
     state: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
+    """Generate a comprehensive PDF report with KPI cards, charts, and tables."""
     try:
-        # Check if repo exists
         repo = db.query(Repository).filter(Repository.id == repo_id).first()
         if not repo:
             raise ValueError("Repository not found")
 
-        # Construct frontend URL
-        # We assume frontend is running on localhost:3000 in this environment
-        frontend_url = f"http://localhost:3000/report/{repo_id}"
-        query_params = []
-        if days: query_params.append(f"days={days}")
-        if author: query_params.append(f"author={author}")
-        if state: query_params.append(f"state={state}")
-        if start_date: query_params.append(f"start_date={start_date}")
-        if end_date: query_params.append(f"end_date={end_date}")
-        
-        if query_params:
-            frontend_url += "?" + "&".join(query_params)
+        # Fetch all analytics data
+        ext = ExtendedAnalytics(db)
 
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-            page = browser.new_page(
-                viewport={"width": 1200, "height": 800},
+        kpi = None
+        flow = []
+        throughput = []
+        contributors = []
+        stale = []
+        slowest = []
+        oldest = []
+
+        try:
+            kpi = ext.get_kpi_with_duration(
+                repo_id, days, author, state, start_date, end_date
             )
-            
-            # Navigate and wait for network to be idle so all data and charts load
-            page.goto(frontend_url, wait_until="networkidle", timeout=60000)
-            
-            # Wait an additional second to ensure animations are settled if any
-            page.wait_for_timeout(1000)
+        except Exception:
+            pass
 
-            # Generate PDF
-            pdf_bytes = page.pdf(
-                format="A4",
-                print_background=True,
-                margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"}
+        try:
+            flow_res = ext.get_monthly_flow_filtered(
+                repo_id, 6, days=days, author=author,
+                state=state, start_date=start_date, end_date=end_date
             )
-            
-            browser.close()
+            flow = flow_res if isinstance(flow_res, list) else []
+        except Exception:
+            pass
 
+        try:
+            tp_res = ext.get_throughput_filtered(
+                repo_id, 8, days=days, author=author,
+                state=state, start_date=start_date, end_date=end_date
+            )
+            throughput = tp_res if isinstance(tp_res, list) else []
+        except Exception:
+            pass
+
+        try:
+            contrib_res = ext.get_contributors_filtered(
+                repo_id, page=1, limit=20, days=days,
+                author=author, state=state, start_date=start_date, end_date=end_date
+            )
+            contributors = contrib_res.get("data", []) if contrib_res else []
+        except Exception:
+            pass
+
+        try:
+            stale_res = ext.get_stale_recommendations(repo_id, page=1, limit=15)
+            stale = stale_res.get("data", []) if stale_res else []
+        except Exception:
+            pass
+
+        try:
+            slow_res = ext.get_slowest_merged_filtered(
+                repo_id, page=1, limit=15, days=days, author=author,
+                start_date=start_date, end_date=end_date
+            )
+            slowest = slow_res.get("data", []) if slow_res else []
+        except Exception:
+            pass
+
+        try:
+            oldest_res = ext.get_oldest_open_filtered(
+                repo_id, page=1, limit=20, days=days, author=author,
+                start_date=start_date, end_date=end_date
+            )
+            oldest = oldest_res.get("data", []) if oldest_res else []
+        except Exception:
+            pass
+
+        try:
+            risk_res = ext.get_pr_risk_panel(repo_id, page=1, limit=15)
+            risks = risk_res.get("data", []) if risk_res else []
+        except Exception:
+            risks = []
+
+        # Generate PDF using reportlab
+        from services.pdf_generator import generate_pdf_report
+        pdf_bytes = generate_pdf_report(
+            repo=repo,
+            kpi=kpi,
+            flow=flow,
+            throughput=throughput,
+            contributors=contributors,
+            stale=stale,
+            slowest=slowest,
+            oldest=oldest,
+            risks=risks,
+        )
+
+        filename = f"prism_report_{repo.owner}_{repo.name}.pdf"
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=prism_report_{repo_id}.pdf"},
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(pdf_bytes)),
+            },
         )
     except ValueError as e:
-        status = 404 if "not found" in str(e).lower() else 400
-        raise HTTPException(status_code=status, detail=str(e))
+        status_code = 404 if "not found" in str(e).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
