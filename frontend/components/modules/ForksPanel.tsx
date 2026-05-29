@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react'
 import { GitFork, Star, Clock, Activity, TrendingUp, Users, Heart } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getForksAnalytics, getForks } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
  
@@ -34,17 +36,29 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
       {/* KPI stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Total Forks', value: syncStatus ? formatTelemetry(syncStatus.synced_forks || syncStatus.total_forks, syncStatus.expected_forks) : (summary ? formatTelemetry(summary.synced_forks || summary.total_forks, summary.expected_forks) : '—'), sub: 'Ecosystem paths', icon: <GitFork className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Active Forks', value: (summary?.active_forks ?? 0).toLocaleString(), sub: 'Pushes <= 30 days', icon: <Activity className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Stale Forks', value: (summary?.stale_forks ?? 0).toLocaleString(), sub: '90+ days inactive', icon: <Clock className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
-          { label: 'Starred Forks', value: (summary?.starred_forks ?? 0).toLocaleString(), sub: 'Ecosystem stars', icon: <Star className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
-          { label: 'Avg Fork Stars', value: summary?.avg_fork_stars ?? 0, sub: 'Popularity index', icon: <Star className="h-4 w-4 text-yellow-500" />, accent: 'border-yellow-100/30 dark:border-yellow-950/40 bg-yellow-50/40 dark:bg-yellow-950/20 text-yellow-800 dark:text-yellow-400' },
-          { label: 'Adoption Rate', value: `${summary?.adoption_rate ?? 0}%`, sub: 'Active fork ratio', icon: <TrendingUp className="h-4 w-4 text-violet-500" />, accent: 'border-violet-100/30 dark:border-violet-950/40 bg-violet-50/40 dark:bg-violet-950/20 text-violet-800 dark:text-violet-400' },
-        ].map((card) => (
+          { label: 'Total Forks', tooltipKey: 'totalForks', value: syncStatus ? formatTelemetry(syncStatus.synced_forks || syncStatus.total_forks, syncStatus.expected_forks) : (summary ? formatTelemetry(summary.synced_forks || summary.total_forks, summary.expected_forks) : '—'), sub: 'Ecosystem paths', icon: <GitFork className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Active Forks', tooltipKey: 'activeForks', value: (summary?.active_forks ?? 0).toLocaleString(), sub: 'Pushes <= 30 days', icon: <Activity className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Stale Forks', tooltipKey: 'staleForks', value: (summary?.stale_forks ?? 0).toLocaleString(), sub: '90+ days inactive', icon: <Clock className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
+          { label: 'Starred Forks', tooltipKey: 'starredForks', value: (summary?.starred_forks ?? 0).toLocaleString(), sub: 'Ecosystem stars', icon: <Star className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
+          { label: 'Avg Fork Stars', tooltipKey: 'avgForkStars', value: summary?.avg_fork_stars ?? 0, sub: 'Popularity index', icon: <Star className="h-4 w-4 text-yellow-500" />, accent: 'border-yellow-100/30 dark:border-yellow-950/40 bg-yellow-50/40 dark:bg-yellow-950/20 text-yellow-800 dark:text-yellow-400' },
+          { label: 'Adoption Rate', tooltipKey: 'adoptionRate', value: `${summary?.adoption_rate ?? 0}%`, sub: 'Active fork ratio', icon: <TrendingUp className="h-4 w-4 text-violet-500" />, accent: 'border-violet-100/30 dark:border-violet-950/40 bg-violet-50/40 dark:bg-violet-950/20 text-violet-800 dark:text-violet-400' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-1.5 ${card.accent}`}>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted">{card.label}</span>
-              {card.icon}
+              <div className="flex items-center gap-2">
+                {card.tooltipKey ? (
+                  <Tooltip
+                    content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                    position="left"
+                    showIcon={false}
+                  >
+                    <span className="cursor-help p-0.5 flex items-center">{card.icon}</span>
+                  </Tooltip>
+                ) : (
+                  card.icon
+                )}
+              </div>
             </div>
             <div className="space-y-0.5">
               <span className="text-xl font-black tracking-tight leading-none text-primary block">{card.value}</span>
@@ -59,10 +73,10 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
         
         {/* Fork Growth Trend (Area Chart) */}
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <div className="mb-4">
+          <div className="mb-1">
             <h3 className="text-sm font-bold text-primary">Fork Growth Trend</h3>
-            <p className="text-[10px] text-muted font-semibold">Growth metrics: new forks created per month</p>
           </div>
+          <p className="text-[10px] text-muted font-semibold mb-4">Growth metrics: new forks created per month</p>
           
           {growth.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
@@ -76,7 +90,7 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
                 <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <RechartsTooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
                 <Area type="monotone" dataKey="new_forks" name="New Forks" stroke="#6366f1" strokeWidth={2.5} fill="url(#forkGrad)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -90,7 +104,9 @@ export default function ForksPanel({ repoId, syncStatus }: Props) {
       {/* Forks list */}
       <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h3 className="text-sm font-bold text-primary">Forks Ecosystem</h3>
+          <div>
+            <h3 className="text-sm font-bold text-primary">Forks Ecosystem</h3>
+          </div>
           <div className="flex gap-1.5">
             {['all', 'active', 'stale'].map(f => (
               <button key={f} onClick={() => { setFilter(f); setPage(1) }}

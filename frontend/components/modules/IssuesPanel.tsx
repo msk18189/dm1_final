@@ -2,7 +2,9 @@
  
 import { useState, useEffect } from 'react'
 import { CircleDot, Bug, Clock, TrendingDown, AlertTriangle, ChevronRight, Activity, Shield, Users, Inbox, CheckCircle2 } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getIssuesAnalytics, getIssues, getStaleIssues } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
 
@@ -60,17 +62,29 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
       {/* KPI cards strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Total Issues', value: syncStatus ? formatTelemetry(syncStatus.synced_issues || syncStatus.total_issues, syncStatus.expected_issues) : (summary ? formatTelemetry(summary.synced_issues || summary.total_issues, summary.expected_issues) : '—'), sub: 'All time', icon: <CircleDot className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Open Issues', value: summary ? (summary.open_issues ?? Math.max(0, (summary.total_issues || 0) - (summary.closed_issues || 0))).toLocaleString() : '—', sub: 'Active backlog', icon: <CircleDot className="h-4 w-4 text-orange-500" />, accent: 'border-orange-100/30 dark:border-orange-950/40 bg-orange-50/40 dark:bg-orange-950/20 text-orange-850 dark:text-orange-400' },
-          { label: 'Closed Issues', value: summary ? (summary.closed_issues ?? 0).toLocaleString() : '—', sub: 'Completed task', icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Stale (30d+)', value: summary ? (summary.stale_issues ?? 0).toLocaleString() : '—', sub: 'Needs attention', icon: <AlertTriangle className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
-          { label: 'Bug Reports', value: summary ? (summary.bug_count ?? 0).toLocaleString() : '—', sub: 'Severity bugs', icon: <Bug className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
-          { label: 'Avg Resolution', value: summary ? `${summary.avg_resolution_days ?? 0}d` : '—', sub: 'Backlog cycle time', icon: <Clock className="h-4 w-4 text-purple-500" />, accent: 'border-purple-100/30 dark:border-purple-950/40 bg-purple-50/40 dark:bg-purple-950/20 text-purple-800 dark:text-purple-400' },
-        ].map((card) => (
+          { label: 'Total Issues', tooltipKey: 'totalIssues', value: syncStatus ? formatTelemetry(syncStatus.synced_issues || syncStatus.total_issues, syncStatus.expected_issues) : (summary ? formatTelemetry(summary.synced_issues || summary.total_issues, summary.expected_issues) : '—'), sub: 'All time', icon: <CircleDot className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Open Issues', tooltipKey: 'openIssues', value: summary ? (summary.open_issues ?? Math.max(0, (summary.total_issues || 0) - (summary.closed_issues || 0))).toLocaleString() : '—', sub: 'Active backlog', icon: <CircleDot className="h-4 w-4 text-orange-500" />, accent: 'border-orange-100/30 dark:border-orange-950/40 bg-orange-50/40 dark:bg-orange-950/20 text-orange-850 dark:text-orange-400' },
+          { label: 'Closed Issues', tooltipKey: 'closedIssues', value: summary ? (summary.closed_issues ?? 0).toLocaleString() : '—', sub: 'Completed task', icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Stale (30d+)', tooltipKey: 'staleIssues', value: summary ? (summary.stale_issues ?? 0).toLocaleString() : '—', sub: 'Needs attention', icon: <AlertTriangle className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
+          { label: 'Bug Reports', tooltipKey: 'bugReports', value: summary ? (summary.bug_count ?? 0).toLocaleString() : '—', sub: 'Severity bugs', icon: <Bug className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
+          { label: 'Avg Resolution', tooltipKey: 'avgResolutionTime', value: summary ? `${summary.avg_resolution_days ?? 0}d` : '—', sub: 'Backlog cycle time', icon: <Clock className="h-4 w-4 text-purple-500" />, accent: 'border-purple-100/30 dark:border-purple-950/40 bg-purple-50/40 dark:bg-purple-950/20 text-purple-800 dark:text-purple-400' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-1.5 ${card.accent}`}>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted">{card.label}</span>
-              {card.icon}
+              <div className="flex items-center gap-2">
+                {card.tooltipKey ? (
+                  <Tooltip
+                    content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                    position="left"
+                    showIcon={false}
+                  >
+                    <span className="cursor-help p-0.5 flex items-center">{card.icon}</span>
+                  </Tooltip>
+                ) : (
+                  card.icon
+                )}
+              </div>
             </div>
             <div className="space-y-0.5">
               <span className="text-xl font-black tracking-tight leading-none text-primary block">{card.value}</span>
@@ -87,15 +101,15 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
         <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4">
             <h3 className="text-sm font-bold text-primary">Issue Trend</h3>
-            <p className="text-[10px] text-muted font-semibold">Backlog growth: Opened vs Closed issues</p>
           </div>
+          <p className="text-[10px] text-muted font-semibold mb-3">Backlog growth: Opened vs Closed issues</p>
           {velocity.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={velocity} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
                 <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <RechartsTooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
                 <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)' }} />
                 <Line type="monotone" dataKey="opened" name="Opened" stroke="#f97316" strokeWidth={2.5} dot={{ r: 3 }} />
                 <Line type="monotone" dataKey="closed" name="Closed" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3 }} />
@@ -109,7 +123,9 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
         {/* Priority Donut chart */}
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-primary mb-1">Issues by Priority</h3>
+            <div className="mb-1">
+              <h3 className="text-sm font-bold text-primary">Issues by Priority</h3>
+            </div>
             <p className="text-[10px] text-muted font-semibold">Priority distribution for open issues</p>
           </div>
  
@@ -149,7 +165,9 @@ export default function IssuesPanel({ repoId, syncStatus }: Props) {
  
       {/* Heatmap block */}
       <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <h3 className="text-sm font-bold text-primary mb-1">Issue Heatmap</h3>
+        <div className="mb-1">
+          <h3 className="text-sm font-bold text-primary">Issue Heatmap</h3>
+        </div>
         <p className="text-[10px] text-muted font-semibold mb-4">Backlog activity mapped by day of the week</p>
         
         <div className="flex gap-2">

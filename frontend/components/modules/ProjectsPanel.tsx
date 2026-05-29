@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Kanban, CheckCircle2, Circle, Clock, AlertCircle, TrendingUp, ChevronRight } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getProjectsAnalytics, getProjects } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
  
@@ -35,18 +37,32 @@ export default function ProjectsPanel({ repoId, syncStatus }: Props) {
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: 'Total Projects', value: syncStatus ? formatTelemetry(syncStatus.total_projects, 0) : (summary ? formatTelemetry(summary.total_projects, 0) : '—'), sub: 'Project boards', icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Open Boards', value: summary?.open_projects ?? 0, sub: 'Active planning', icon: <Circle className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Closed Boards', value: summary?.closed_projects ?? 0, sub: 'Archived boards', icon: <CheckCircle2 className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
-        ].map((card) => (
+          { label: 'Total Projects', tooltipKey: 'totalProjects', value: syncStatus ? formatTelemetry(syncStatus.total_projects, 0) : (summary ? formatTelemetry(summary.total_projects, 0) : '—'), sub: 'Project boards', icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Open Boards', tooltipKey: 'openBoards', value: summary?.open_projects ?? 0, sub: 'Active planning', icon: <Circle className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Closed Boards', tooltipKey: 'closedBoards', value: summary?.closed_projects ?? 0, sub: 'Archived boards', icon: <CheckCircle2 className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex items-center justify-between gap-3 ${card.accent}`}>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted block">{card.label}</span>
               <span className="text-2xl font-black tracking-tight leading-none text-primary block">{card.value}</span>
               <span className="text-[9px] font-semibold text-muted block">{card.sub}</span>
             </div>
-            <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0">
-              {card.icon}
+            <div className="flex items-center gap-2">
+              {card.tooltipKey ? (
+                <Tooltip
+                  content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                  position="left"
+                  showIcon={false}
+                >
+                  <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0 cursor-help">
+                    {card.icon}
+                  </div>
+                </Tooltip>
+              ) : (
+                <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0">
+                  {card.icon}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -57,7 +73,9 @@ export default function ProjectsPanel({ repoId, syncStatus }: Props) {
         
         {/* Projects list */}
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-primary mb-1">Active Projects</h3>
+          <div className="mb-1">
+            <h3 className="text-sm font-bold text-primary">Active Projects</h3>
+          </div>
           <p className="text-[10px] text-muted font-semibold mb-4">Board progress tracking and task status</p>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

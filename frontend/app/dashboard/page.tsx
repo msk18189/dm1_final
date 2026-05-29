@@ -14,6 +14,7 @@ import DashboardFilters, { DashboardFiltersState } from '@/components/DashboardF
 import PRRiskPanel from '@/components/PRRiskPanel'
 import StalePRAlerts from '@/components/StalePRAlerts'
 import ExportButton from '@/components/ExportButton'
+import { Tooltip } from '@/components/ui/Tooltip'
 
 // Module panels — all lazy-loaded for performance
 const IssuesPanel = dynamic(() => import('@/components/modules/IssuesPanel'), { ssr: false })
@@ -35,7 +36,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   Legend,
   ResponsiveContainer,
   PieChart,
@@ -52,6 +53,7 @@ import {
 import { formatDurationDisplay, formatDurationFromDays, formatTelemetry } from '@/lib/format'
 import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
 import { getAuthUser, signOut, isAuthenticated } from '@/lib/auth'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import {
   AlertCircle, FolderGit2, Clock, Timer, Eye, MessageSquare,
   GitMerge, AlertOctagon, RefreshCw, Zap, Loader2, Sparkles,
@@ -796,42 +798,48 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
         : (kpi?.total_prs != null ? formatTelemetry(kpi.total_prs, 0) : '—'),
       sub: 'All time',
       icon: <FolderGit2 className="h-4 w-4" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.totalPRs
     },
     {
       label: 'Merge Rate',
       value: kpi?.merge_rate != null ? `${kpi.merge_rate}%` : '—',
       sub: 'of closed PRs',
       icon: <GitMerge className="h-4 w-4" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.mergeRate
     },
     {
       label: 'Avg Cycle Time',
       value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time)) : '—',
       sub: 'Merged PRs',
       icon: <Clock className="h-4 w-4" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.avgCycleTime
     },
     {
       label: 'Avg Review Wait',
       value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_wait_for_review_display, kpi.avg_wait_for_review)) : '—',
       sub: 'Time to first review',
       icon: <Eye className="h-4 w-4" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.avgReviewWait
     },
     {
       label: 'Avg Review Duration',
       value: kpi ? renderDuration(formatDurationDisplay(kpi.avg_review_duration_display, kpi.avg_review_duration)) : '—',
       sub: 'Active review time',
       icon: <MessageSquare className="h-4 w-4" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.avgReviewDuration
     },
     {
       label: 'Stale PRs',
       value: kpi?.stale_prs != null ? kpi.stale_prs : '—',
       sub: '> 30 days old',
       icon: <AlertOctagon className="h-4 w-4 text-rose-500" />,
-      onClick: () => onNavigate('pull_requests')
+      onClick: () => onNavigate('pull_requests'),
+      tooltip: METRIC_TOOLTIPS.stalePRs
     },
   ]
 
@@ -842,11 +850,11 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
   return (
     <div className="space-y-6">
 
-      {/* Asymmetric layout header row (Executive Summary & Health Score) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Asymmetric layout header row (Executive Summary) */}
+      <div className="grid grid-cols-1 gap-6">
         
         {/* Executive Summary Hero Card */}
-        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 flex flex-col justify-between shadow-sm relative overflow-hidden">
+        <div className="rounded-2xl border border-border bg-surface p-5 flex flex-col justify-between shadow-sm relative overflow-hidden">
           <div className="absolute right-0 top-0 h-40 w-40 bg-gradient-to-bl from-indigo-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -866,7 +874,7 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                     {kpi.merge_rate >= 75 ? (
                       <>
                         <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mb-1">
-                          <CheckCircle className="h-4 w-4" /> Strong merging cadence
+                          <CheckCircle className="h-4 w-4" /> Strong merging 
                         </span>
                         With a <span className="font-bold">{kpi.merge_rate}% merge rate</span>, your team is closing PRs efficiently. Average cycle time of <span className="font-bold">{renderDuration(formatDurationDisplay(kpi.avg_cycle_time_display, kpi.avg_cycle_time))}</span> shows good momentum.
                       </>
@@ -900,7 +908,7 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                         CI/CD stability at {ciScore}%
                       </div>
                     )}
-                    {kpi.stale_prs === 0 && (kpi.avg_wait_for_review ?? 0) <= 2 && ciScore >= 80 && (
+                    {kpi.stale_prs === 0 && (kpi.avg_wait_for_review ?? 0) <= 2 && (ciScore ?? 0) >= 80 && (
                       <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-semibold">
                         <CheckCircle className="h-3.5 w-3.5" />
                         All metrics healthy
@@ -936,67 +944,6 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
             ))}
           </div>
         </div>
-
-        {/* Repository Health Score Radial Ring */}
-        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-primary">Repository Health Score</h3>
-            <button onClick={() => onNavigate('repo_health')} className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">
-              View details &rarr;
-            </button>
-          </div>
-
-          {score === null ? (
-            <div className="flex items-center justify-center h-32 text-muted text-xs italic">Health score loading...</div>
-          ) : (
-            <div className="flex items-center gap-6">
-              {/* Radial score ring */}
-              <div className="relative flex items-center justify-center shrink-0">
-                <svg className="w-24 h-24 transform -rotate-90">
-                  <circle
-                    cx="48"
-                    cy="48"
-                    r={radius}
-                    stroke="var(--bg-surface-soft)"
-                    strokeWidth={strokeWidth}
-                    fill="transparent"
-                  />
-                  <circle
-                    cx="48"
-                    cy="48"
-                    r={radius}
-                    stroke="#10b981"
-                    strokeWidth={strokeWidth}
-                    fill="transparent"
-                    strokeDasharray={circumference}
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                    className="transition-all duration-800 ease-out"
-                  />
-                </svg>
-                <div className="absolute text-center">
-                  <span className="text-3xl font-extrabold text-primary tracking-tight">{score}</span>
-                  <span className="text-[10px] text-muted block font-semibold mt-[-2px]">/100</span>
-                </div>
-              </div>
-
-              {/* Health component list — only rendered when real data is present */}
-              <div className="flex-1 space-y-2 min-w-0">
-                {healthMetrics.slice(0, 5).map((m) => (
-                  <div key={m.label} className="space-y-0.5">
-                    <div className="flex justify-between text-[10px] font-semibold text-secondary">
-                      <span className="truncate pr-1">{m.label}</span>
-                      <span className="text-primary font-bold">{m.score !== null ? `${m.score}/100` : '—'}</span>
-                    </div>
-                    <div className="h-1 bg-surface-soft rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${m.color}`} style={{ width: m.score !== null ? `${m.score}%` : '0%' }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* KPI analytics strip */}
@@ -1008,10 +955,20 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
             className="rounded-2xl border border-border bg-surface p-4 text-left shadow-sm hover:bg-bg-hover transition flex flex-col justify-between gap-3 group relative overflow-hidden"
           >
             <div className="flex items-center justify-between w-full">
-              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{card.label}</span>
-              <div className="p-1.5 rounded-lg bg-surface-soft border border-border text-muted group-hover:scale-105 transition">
-                {card.icon}
+              <div>
+                <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{card.label}</span>
               </div>
+              {card.tooltip ? (
+                <Tooltip content={card.tooltip} showIcon={false} position="left">
+                  <div className="p-1.5 rounded-lg bg-surface-soft border border-border text-muted group-hover:scale-105 transition cursor-help">
+                    {card.icon}
+                  </div>
+                </Tooltip>
+              ) : (
+                <div className="p-1.5 rounded-lg bg-surface-soft border border-border text-muted group-hover:scale-105 transition">
+                  {card.icon}
+                </div>
+              )}
             </div>
             <div className="space-y-0.5">
               <p className="text-2xl font-black text-primary tracking-tight leading-none">{card.value}</p>
@@ -1031,7 +988,9 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Performance Trend</p>
                 <h4 className="text-sm font-bold text-primary mt-1">Cycle Time</h4>
               </div>
-              <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+              <Tooltip content={METRIC_TOOLTIPS.performanceTrend} position="left" showIcon={false}>
+                <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400 cursor-help" />
+              </Tooltip>
             </div>
             <p className="text-xs text-secondary leading-relaxed">
               {kpi.avg_cycle_time && kpi.avg_cycle_time <= 5 ? (
@@ -1049,7 +1008,9 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Review Efficiency</p>
                 <h4 className="text-sm font-bold text-primary mt-1">Wait Time</h4>
               </div>
-              <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <Tooltip content={METRIC_TOOLTIPS.reviewEfficiency} position="left" showIcon={false}>
+                <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400 cursor-help" />
+              </Tooltip>
             </div>
             <p className="text-xs text-secondary leading-relaxed">
               {(kpi.avg_wait_for_review ?? 0) <= 1 ? (
@@ -1067,7 +1028,9 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Quality Signals</p>
                 <h4 className="text-sm font-bold text-primary mt-1">Merge Rate</h4>
               </div>
-              <GitMerge className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <Tooltip content={METRIC_TOOLTIPS.qualitySignals} position="left" showIcon={false}>
+                <GitMerge className="h-4 w-4 text-emerald-600 dark:text-emerald-400 cursor-help" />
+              </Tooltip>
             </div>
             <p className="text-xs text-secondary leading-relaxed">
               {kpi.merge_rate >= 80 ? (
@@ -1087,7 +1050,9 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 <p className="text-[10px] font-bold text-muted uppercase tracking-wider">Backlog Health</p>
                 <h4 className="text-sm font-bold text-primary mt-1">Stale Items</h4>
               </div>
-              <AlertOctagon className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+              <Tooltip content={METRIC_TOOLTIPS.backlogHealth} position="left" showIcon={false}>
+                <AlertOctagon className="h-4 w-4 text-rose-600 dark:text-rose-400 cursor-help" />
+              </Tooltip>
             </div>
             <p className="text-xs text-secondary leading-relaxed">
               {kpi.stale_prs === 0 ? (
@@ -1107,9 +1072,11 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
         
         {/* PR Flow Chart (ComposedChart) */}
         <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-primary">PR Flow</h3>
-            <p className="text-[10px] text-muted font-semibold">Created · Merged · Closed (not merged) · Open at month end</p>
+          <div className="mb-4 flex items-center gap-2">
+            <div>
+              <h3 className="text-sm font-bold text-primary">PR Flow</h3>
+              <p className="text-[10px] text-muted font-semibold">Created · Merged · Closed (not merged) · Open at month end</p>
+            </div>
           </div>
           {monthlyFlow && monthlyFlow.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
@@ -1117,7 +1084,7 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
                 <XAxis dataKey="month" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
                 <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <RechartsTooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
                 <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)' }} />
                 <Bar dataKey="created" name="Created" fill="#6366f1" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="merged" name="Merged" fill="#10b981" radius={[4, 4, 0, 0]} />
@@ -1168,16 +1135,22 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
 
       {/* Needs Attention alerts center — all values from real telemetry */}
       <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
-        <h3 className="text-xs font-bold text-primary uppercase tracking-wider mb-3">Needs Attention</h3>
+        <div>
+          <h3 className="text-xs font-bold text-primary uppercase tracking-wider">Needs Attention</h3>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 
           {/* Real stale PR count from KPI */}
           <div className="rounded-xl border border-rose-100 dark:border-rose-900/25 bg-rose-50/40 dark:bg-rose-950/15 p-3 flex items-start gap-2.5 hover:bg-rose-50 dark:hover:bg-rose-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
-            <AlertCircle className="h-4.5 w-4.5 text-rose-500 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-rose-900 dark:text-rose-250">
-                {kpi?.stale_prs != null ? `${kpi.stale_prs} Stale PR${kpi.stale_prs !== 1 ? 's' : ''}` : 'Stale PRs'}
-              </p>
+            <Tooltip content={METRIC_TOOLTIPS.stalePRs} position="top" showIcon={false}>
+              <AlertCircle className="h-4.5 w-4.5 text-rose-500 shrink-0 mt-0.5" />
+            </Tooltip>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-bold text-rose-900 dark:text-rose-250">
+                  {kpi?.stale_prs != null ? `${kpi.stale_prs} Stale PR${kpi.stale_prs !== 1 ? 's' : ''}` : 'Stale PRs'}
+                </p>
+              </div>
               <p className="text-[10px] text-rose-600 dark:text-rose-400">
                 {kpi?.stale_prs != null ? (kpi.stale_prs === 0 ? 'None stale' : '> 30 days old') : 'Loading...'}
               </p>
@@ -1187,7 +1160,7 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
           {/* Open PRs awaiting any review — from real open_prs count */}
           <div className="rounded-xl border border-amber-100 dark:border-amber-900/25 bg-amber-50/40 dark:bg-amber-950/15 p-3 flex items-start gap-2.5 hover:bg-amber-50 dark:hover:bg-amber-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
             <Clock className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-bold text-amber-900 dark:text-amber-250">
                 {kpi?.open_prs != null ? `${kpi.open_prs} Open PR${kpi.open_prs !== 1 ? 's' : ''}` : 'Open PRs'}
               </p>
@@ -1199,9 +1172,13 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
 
           {/* CI/CD health from repo health score */}
           <div className="rounded-xl border border-red-100 dark:border-red-900/25 bg-red-50/40 dark:bg-red-950/15 p-3 flex items-start gap-2.5 hover:bg-red-50 dark:hover:bg-red-950/25 transition cursor-pointer" onClick={() => onNavigate('cicd')}>
-            <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-red-900 dark:text-red-250">CI/CD Health</p>
+            <Tooltip content={METRIC_TOOLTIPS.cicdHealth} position="top" showIcon={false}>
+              <AlertCircle className="h-4.5 w-4.5 text-red-500 shrink-0 mt-0.5" />
+            </Tooltip>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs font-bold text-red-900 dark:text-red-250">CI/CD Health</p>
+              </div>
               <p className="text-[10px] text-red-600 dark:text-red-400">
                 {repoHealth?.components?.ci_cd != null
                   ? `${Math.round((repoHealth.components.ci_cd / 25) * 100)}% reliability`
@@ -1213,7 +1190,7 @@ function OverviewSection({ kpi, monthlyFlow, syncStatus, repoLabel, onNavigate, 
           {/* Avg cycle time from KPI */}
           <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/25 bg-indigo-50/40 dark:bg-indigo-950/15 p-3 flex items-start gap-2.5 hover:bg-indigo-50 dark:hover:bg-indigo-950/25 transition cursor-pointer" onClick={() => onNavigate('pull_requests')}>
             <Clock className="h-4.5 w-4.5 text-indigo-500 shrink-0 mt-0.5" />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-bold text-indigo-900 dark:text-indigo-250">Avg Cycle Time</p>
               <p className="text-[10px] text-indigo-600 dark:text-indigo-400">
                 {kpi?.avg_cycle_time != null

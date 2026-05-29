@@ -3,6 +3,8 @@
 import { motion } from 'framer-motion'
 import { ReactNode } from 'react'
 import type { PaletteKey } from '@/lib/theme'
+import { Tooltip } from './ui/Tooltip'
+import type { TooltipProps } from './ui/Tooltip'
 
 interface KPICardProps {
   title: string
@@ -11,6 +13,7 @@ interface KPICardProps {
   trend?: number
   unit?: string
   accent?: PaletteKey
+  tooltip?: TooltipProps['content']
 }
 
 const accentStyles: Record<
@@ -65,6 +68,7 @@ export default function KPICard({
   trend,
   unit,
   accent = 'emerald',
+  tooltip,
 }: KPICardProps) {
   const a = accentStyles[accent]
   const isLimited = typeof value === 'string' && LIMITED_VALUES.includes(value)
@@ -83,7 +87,9 @@ export default function KPICard({
       <div className={`absolute -right-4 -top-4 h-20 w-20 rounded-full blur-2xl opacity-75 dark:opacity-40 ${a.glow}`} />
       <div className="relative flex items-start justify-between">
         <div className="flex-1 min-w-0 pr-2">
-          <p className={`text-[11px] font-bold uppercase tracking-wider ${a.title}`}>{title}</p>
+          <div className="flex items-center gap-2">
+            <p className={`text-[11px] font-bold uppercase tracking-wider ${a.title}`}>{title}</p>
+          </div>
           <div className="mt-3 flex items-baseline gap-2 min-w-0">
             {isLimited ? (
               // Badge pill for limited/unavailable data
@@ -122,7 +128,13 @@ export default function KPICard({
             </p>
           )}
         </div>
-        <div className={`rounded-xl border p-2.5 shrink-0 ${a.icon}`}>{icon}</div>
+        {tooltip ? (
+          <Tooltip content={tooltip} position="left" showIcon={false}>
+            <div className={`rounded-xl border p-2.5 shrink-0 ${a.icon}`}>{icon}</div>
+          </Tooltip>
+        ) : (
+          <div className={`rounded-xl border p-2.5 shrink-0 ${a.icon}`}>{icon}</div>
+        )}
       </div>
     </motion.div>
   )

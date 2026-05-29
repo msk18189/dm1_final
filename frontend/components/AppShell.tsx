@@ -526,10 +526,36 @@ export default function AppShell({
               </button>
             </div>
 
-            {/* Sync Completed badge */}
-            <span className="hidden rounded-full bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-250 dark:border-emerald-850 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 sm:inline-block">
-              Completed
-            </span>
+            {/* Sync Status badge */}
+            {syncStatus && (
+              <span className={`hidden rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:inline-block ${
+                syncStatus.sync_status === 'COMPLETED'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-250 dark:border-emerald-850 text-emerald-700 dark:text-emerald-400'
+                  : syncStatus.sync_status === 'FAILED'
+                  ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-250 dark:border-rose-850 text-rose-700 dark:text-rose-400'
+                  : syncStatus.sync_status === 'PARTIAL' || syncStatus.sync_status === 'RATE_LIMITED'
+                  ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-250 dark:border-amber-850 text-amber-700 dark:text-amber-400'
+                  : syncStatus.sync_status === 'SYNCING' || syncStatus.sync_status === 'PENDING'
+                  ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-250 dark:border-blue-850 text-blue-700 dark:text-blue-400'
+                  : 'bg-slate-50 dark:bg-slate-950/20 border-slate-250 dark:border-slate-850 text-slate-700 dark:text-slate-400'
+              }`}>
+                {syncStatus.sync_status === 'COMPLETED' 
+                  ? 'Completed' 
+                  : syncStatus.sync_status === 'SYNCING' 
+                  ? 'Syncing...' 
+                  : syncStatus.sync_status === 'PENDING'
+                  ? 'Pending'
+                  : syncStatus.sync_status === 'VERIFYING'
+                  ? 'Verifying'
+                  : syncStatus.sync_status === 'PARTIAL'
+                  ? 'Partial'
+                  : syncStatus.sync_status === 'RATE_LIMITED'
+                  ? 'Rate Limited'
+                  : syncStatus.sync_status === 'FAILED'
+                  ? 'Failed'
+                  : syncStatus.sync_status}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

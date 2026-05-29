@@ -304,28 +304,43 @@ class BranchAnalytics:
         base = self.db.query(Branch).filter(Branch.repo_id == repo_id)
         total = base.count()
         protected_count = base.filter(Branch.protected == True).count()
-        stale_count = base.filter(Branch.staleness_days > 90).count()
-        inactive_count = base.filter(Branch.staleness_days > 30).count()
-        active_count = base.filter(Branch.staleness_days <= 7).count()
+        active_count = base.filter(
+            Branch.staleness_days != None,
+            Branch.staleness_days <= 30
+        ).count()
+        stale_count = base.filter(
+            Branch.staleness_days != None,
+            Branch.staleness_days >= 90
+        ).count()
+        inactive_count = total - active_count - stale_count
 
         return {
             "total_branches": total,
             "protected_branches": protected_count,
-            "stale_branches": stale_count,        # 90+ days
-            "inactive_branches": inactive_count,   # 30+ days
-            "active_branches": active_count,       # <= 7 days
-            "stale_rate": round((stale_count / total * 100) if total else 0, 1),
+            "active_branches": active_count,     # <= 30 days
+            "inactive_branches": inactive_count,  # > 30 and < 90 days (+ NULL)
+            "stale_branches": stale_count,        # >= 90 days
         }
 
     def get_branches_list(self, repo_id: int, page: int = 1, limit: int = 20,
                           filter_type: str = "all") -> Dict[str, Any]:
         query = self.db.query(Branch).filter(Branch.repo_id == repo_id)
         if filter_type == "stale":
-            query = query.filter(Branch.staleness_days > 90)
+            query = query.filter(Branch.staleness_days >= 90)
         elif filter_type == "protected":
             query = query.filter(Branch.protected == True)
         elif filter_type == "active":
-            query = query.filter(Branch.staleness_days <= 7)
+            query = query.filter(Branch.staleness_days != None, Branch.staleness_days <= 30)
+        elif filter_type == "inactive":
+            # inactive = not active and not stale: (NULL or > 30) and (< 90 or NULL)
+            query = query.filter(
+                ~(
+                    (Branch.staleness_days != None) & (Branch.staleness_days <= 30)
+                ),
+                ~(
+                    (Branch.staleness_days != None) & (Branch.staleness_days >= 90)
+                ),
+            )
 
         total = query.count()
         branches = query.order_by(desc(Branch.last_commit_at)).offset((page - 1) * limit).limit(limit).all()
@@ -338,20 +353,24 @@ class BranchAnalytics:
             "last_commit_message": (b.last_commit_message or "")[:100],
             "last_commit_at": b.last_commit_at.isoformat() if b.last_commit_at else None,
             "staleness_days": b.staleness_days,
-            "health": _branch_health(b.staleness_days),
+            "status": _branch_health(b.staleness_days),
         } for b in branches]
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
 
 def _branch_health(days: Optional[int]) -> str:
+    """Return the mutually exclusive activity status for a branch.
+
+    Active:   staleness_days <= 30
+    Inactive: staleness_days  > 30 and < 90  (also used for NULL — conservative default)
+    Stale:    staleness_days  >= 90
+    """
     if days is None:
-        return "unknown"
-    if days <= 7:
-        return "active"
+        return "inactive"
     if days <= 30:
-        return "moderate"
-    if days <= 90:
+        return "active"
+    if days < 90:
         return "inactive"
     return "stale"
 
@@ -735,7 +754,7 @@ class RepoHealthAnalytics:
         # Branch health (15 pts)
         total_branches = db_count_filter(self.db, Branch, Branch.repo_id == repo_id)
         if total_branches > 0:
-            stale_branches = db_count_filter(self.db, Branch, Branch.repo_id == repo_id, Branch.staleness_days > 90)
+            stale_branches = db_count_filter(self.db, Branch, Branch.repo_id == repo_id, Branch.staleness_days >= 90)
             stale_rate = stale_branches / total_branches
             branch_score = max(0, 15 - int(stale_rate * 15))
         else:
