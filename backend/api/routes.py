@@ -228,29 +228,8 @@ async def refresh_access_token(payload: RefreshTokenRequest, db: AsyncSession = 
 @router.post("/api/auth/logout")
 def logout(response: Response):
     response.delete_cookie(key="accessToken", path="/", secure=True, httponly=True, samesite="strict")
-    response.delete_cookie(key="githubToken", path="/", secure=True, httponly=True, samesite="strict")
     response.delete_cookie(key="isAuthenticated", path="/", secure=True, samesite="strict")
     return {"message": "Logged out"}
-
-class GithubTokenPayload(BaseModel):
-    token: str
-
-@router.post("/api/auth/github-token")
-def set_github_token(payload: GithubTokenPayload, response: Response):
-    response.set_cookie(
-        key="githubToken",
-        value=payload.token,
-        httponly=True,
-        secure=True,
-        samesite="strict",
-        path="/"
-    )
-    return {"message": "Token saved"}
-
-@router.post("/api/auth/logout-github-token")
-def logout_github_token(response: Response):
-    response.delete_cookie(key="githubToken", path="/", secure=True, httponly=True, samesite="strict")
-    return {"message": "Token removed"}
 
 @router.get("/api/auth/me")
 def get_me(current_user: User = Depends(get_current_user)):
@@ -267,7 +246,7 @@ def get_me(current_user: User = Depends(get_current_user)):
 async def verify_repository(request: Request, payload: RepositoryRequest, db: AsyncSession = Depends(get_db)):
     """Verify repository accessibility and fetch basic metadata including API usage estimates."""
     url = payload.url.strip()
-    user_token = (payload.github_token or "").strip() or request.cookies.get("githubToken") or None
+    user_token = (payload.github_token or "").strip() or None
     token_source = "user" if user_token else "none"
 
     from github.client import GitHubClient, GitHubRestClient
@@ -485,7 +464,7 @@ async def analyze_repository(
         url = payload.url.strip()
         owner, repo_name = parse_github_repo_url(url)
         canonical_url = normalize_github_url(owner, repo_name)
-        token = (payload.github_token or "").strip() or request.cookies.get("githubToken") or None
+        token = (payload.github_token or "").strip() or None
         sync_mode = (payload.sync_mode or "").strip() or None
 
         # Extract authenticated user (optional)

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { isAuthenticated, getAuthUser } from '@/lib/auth'
-import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
+
 import { analyzeRepository, formatApiError, getSyncStatus } from '@/lib/api'
 import { Loader2 } from 'lucide-react'
 import AppShell from '@/components/AppShell'
@@ -37,8 +37,7 @@ function AnalyzeContent() {
       }
     }
 
-    // Set token on client side
-    setGithubToken(loadGithubToken())
+
     setIsHydrated(true)
 
     const loadUser = async () => {
@@ -71,6 +70,9 @@ function AnalyzeContent() {
 
       // Redirect to dashboard
       router.push(`/dashboard?repoId=${newRepoId}&section=overview`)
+
+      // Clear PAT after analysis starts — request-scoped only
+      setGithubToken('')
     } catch (err) {
       setIsSyncing(false)
       setGlobalError(formatApiError(err))
@@ -78,7 +80,6 @@ function AnalyzeContent() {
   }, [githubToken, router])
 
   const handleTokenSave = (t: string) => {
-    saveGithubToken(t)
     setGithubToken(t)
   }
 

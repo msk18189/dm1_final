@@ -51,7 +51,7 @@ import {
   getSyncStatus, getRepoHealth,
 } from '@/lib/api'
 import { formatDurationDisplay, formatDurationFromDays, formatTelemetry } from '@/lib/format'
-import { loadGithubToken, saveGithubToken } from '@/lib/tokenStorage'
+import { loadGithubToken } from '@/lib/tokenStorage'
 import { getAuthUser, signOut, isAuthenticated } from '@/lib/auth'
 import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import {
@@ -512,6 +512,9 @@ function DashboardContent() {
       const initialStatus = await getSyncStatus(newRepoId)
       setSyncStatus(initialStatus as SyncStatusData)
       startPolling(newRepoId)
+
+      // Clear PAT after analysis starts — request-scoped only
+      setGithubToken('')
     } catch (err) {
       setIsSyncing(false)
       setGlobalError(formatApiError(err))
@@ -526,7 +529,6 @@ function DashboardContent() {
   }, [repoId, repoLabel, githubToken, handleAnalyze])
 
   const handleTokenSave = (t: string) => {
-    saveGithubToken(t)
     setGithubToken(t)
   }
 

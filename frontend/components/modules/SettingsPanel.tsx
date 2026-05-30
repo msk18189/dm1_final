@@ -11,17 +11,13 @@ interface Props {
  
 export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
   const { theme, setTheme } = useTheme()
-  const [token, setToken] = useState(() => {
-    if (typeof window === 'undefined') return ''
-    return localStorage.getItem('github_token') || ''
-  })
+  const [token, setToken] = useState('')
   const [saved, setSaved] = useState(false)
 
   const [backgroundSync, setBackgroundSync] = useState(false)
   const [rateLimitRecover, setRateLimitRecover] = useState(true)
 
   const handleSave = () => {
-    localStorage.setItem('github_token', token)
     onTokenChange?.(token)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
@@ -100,7 +96,7 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
  
             <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/20 dark:bg-indigo-950/10 p-3 text-indigo-950 dark:text-indigo-300 text-xs flex gap-2 leading-relaxed">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-indigo-500 dark:text-indigo-400" />
-              <span>PRISM operates without a token for public repos. Adding a token enables private repository ingestion and avoids GitHub API limits.</span>
+              <span>Token is temporary and only used for the current analysis session. It is never stored or persisted.</span>
             </div>
  
             <div className="space-y-1.5">
@@ -121,7 +117,7 @@ export default function SettingsPanel({ repoLabel, onTokenChange }: Props) {
           <button onClick={handleSave}
             className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-1.5 mt-4">
             <Save className="h-3.5 w-3.5" />
-            {saved ? '✓ Token Saved' : 'Save Access Token'}
+            {saved ? '✓ Token Applied' : 'Apply Token'}
           </button>
         </div>
       </div>
