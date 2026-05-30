@@ -2,13 +2,15 @@ import argparse
 import sys
 from pathlib import Path
 
-# Ensure the backend package root is available on sys.path.
-# This allows running the script from the repo root as well as from the backend folder.
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from database.database import init_db, SessionLocal
+import asyncio
+from dotenv import load_dotenv
+load_dotenv()
+
+from database.database import init_db, async_session_maker
 from ml.models import MLModels
 from services.data_processor import DataProcessor
 
@@ -38,11 +40,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+async def main_async():
     args = parse_args()
 
     # Ensure database tables exist before training.
-    init_db()
+    await init_db()
 
     if args.models_dir:
         models_dir = Path(args.models_dir).expanduser().resolve()
@@ -57,9 +59,9 @@ def main():
 
     print("Starting ML training from database...")
 
-    with SessionLocal() as db:
+    async with async_session_maker() as db:
         try:
-            result = ml_models.train_from_db(
+            result = await ml_models.train_from_db(
                 db,
                 min_prs=args.min_prs,
                 min_contributors=args.min_contributors,
@@ -75,7 +77,7 @@ def main():
             if result.get("trained"):
                 print("Refreshing stored ML predictions for existing PRs...")
                 processor = DataProcessor(db)
-                refreshed = processor.refresh_ml_predictions(only_open_prs=False)
+                refreshed = await processor.refresh_ml_predictions(only_open_prs=False)
                 print(f"Refreshed ML predictions for {refreshed} PR(s)")
             else:
                 print("No models were trained. Check data availability and retry.")
@@ -85,4 +87,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())

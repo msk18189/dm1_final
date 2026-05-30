@@ -1,7 +1,8 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone,timedelta
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from database.models import PullRequest, Repository, Contributor, MLPrediction, TotalAnalysis
 from github.client import GitHubClient
 import numpy as np
@@ -29,7 +30,7 @@ def normalize_github_url(owner: str, repo_name: str) -> str:
 
 
 class DataProcessor:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.ml_models = None  # Lazy load ML models
     
@@ -45,7 +46,7 @@ class DataProcessor:
                 self.ml_models = False  # Mark as failed
         return self.ml_models if self.ml_models else None
     
-    def process_repository(self, repo_url: str, github_token: Optional[str] = None) -> Dict[str, Any]:
+    async def process_repository(self, repo_url: str, github_token: Optional[str] = None) -> Dict[str, Any]:
         """Process GitHub repository and extract PR data.
 
         github_token: optional PAT from the user (for private repos or higher limits).
@@ -58,10 +59,7 @@ class DataProcessor:
             
             # Check if repo exists in DB
             canonical_url = normalize_github_url(owner, repo_name)
-            repo = self.db.query(Repository).filter(
-                Repository.owner == owner,
-                Repository.name == repo_name
-            ).first()
+            repo = (await self.db.execute(select(Repository).filter(Repository.owner == owner, Repository.name == repo_name))).scalar_one_or_none()
             
             if not repo:
                 full_name = f"{owner}/{repo_name}"
@@ -77,7 +75,7 @@ class DataProcessor:
                     sync_progress="Initializing sync...",
                 )
                 self.db.add(repo)
-                self.db.commit()
+                await self.db.commit()
                 print(f"Created new repository record: {repo.id}")
             else:
                 repo.full_name = repo.full_name or f"{owner}/{repo_name}"
@@ -85,7 +83,7 @@ class DataProcessor:
                 repo.source_url = repo_url
                 repo.sync_status = "SYNCING"
                 repo.sync_progress = "Initializing sync..."
-                self.db.commit()
+                await self.db.commit()
                 print(f"Using existing repository record: {repo.id}")
                 
             # Initialize GitHub client
@@ -110,10 +108,11 @@ class DataProcessor:
             # We fetch pages in a loop
             while has_next and not stop_incremental:
                 repo.sync_progress = f"Fetching PRs (Fetched {total_fetched} so far)..."
-                self.db.commit()
+                await self.db.commit()
                 
                 print(f"Fetching page with cursor: {cursor}")
-                raw_prs, page_info, rate_limit = client.fetch_pull_requests(
+                import asyncio
+                raw_prs, page_info, rate_limit = await asyncio.to_thread(client.fetch_pull_requests, 
                     owner, repo_name, first=50, cursor=cursor
                 )
                 
@@ -142,10 +141,7 @@ class DataProcessor:
                         pr_updated_at = pr_updated_at.replace(tzinfo=timezone.utc)
                         
                     # Check if PR exists
-                    existing_pr = self.db.query(PullRequest).filter(
-                        PullRequest.repo_id == repo.id,
-                        PullRequest.pr_number == parsed_pr["number"]
-                    ).first()
+                    existing_pr = (await self.db.execute(select(PullRequest).filter(PullRequest.repo_id == repo.id, PullRequest.pr_number == parsed_pr["number"]))).scalar_one_or_none()
                     
                     # Stop condition:
                     # If we are doing incremental sync, and the current PR has an updated_at
@@ -201,15 +197,15 @@ class DataProcessor:
                             updated_at=parsed_pr["updated_at"],
                         )
                         self.db.add(pr)
-                        self.db.flush()  # get the PR id
+                        await self.db.flush()  # get the PR id
                         existing_pr = pr
                         new_prs_stored += 1
                         
                     # Generate predictions
-                    self._generate_predictions_safe(existing_pr, parsed_pr)
+                    await self._generate_predictions_safe(existing_pr, parsed_pr)
                     
                 # Commit page database transactions to save progress
-                self.db.commit()
+                await self.db.commit()
                 
                 # Setup for next page
                 has_next = page_info.get("hasNextPage", False)
@@ -220,20 +216,20 @@ class DataProcessor:
             repo.sync_progress = f"Successfully synced {total_fetched} PRs. (New: {new_prs_stored}, Updated: {updated_prs_stored})"
             repo.last_synced_at = datetime.utcnow()
             repo.last_successful_sync = datetime.utcnow()
-            repo.total_prs = self.db.query(PullRequest).filter(PullRequest.repo_id == repo.id).count()
+            repo.total_prs = (await self.db.execute(select(PullRequest).filter(PullRequest.repo_id == repo.id))).scalar()
             repo.error_message = None
-            self.db.commit()
+            await self.db.commit()
             
             # Update contributor statistics and total analysis
             print("Updating contributor stats and overall analysis metrics...")
             repo.sync_progress = "Updating statistics & analysis..."
-            self.db.commit()
+            await self.db.commit()
             
-            self._update_contributor_stats(repo.id, repo)
-            self._update_total_analysis(repo)
+            await self._update_contributor_stats(repo.id, repo)
+            await self._update_total_analysis(repo)
             
             repo.sync_progress = f"Sync completed. Total PRs: {repo.total_prs}."
-            self.db.commit()
+            await self.db.commit()
             
             print(f"Sync successfully completed for {owner}/{repo_name}")
             return {
@@ -247,27 +243,25 @@ class DataProcessor:
         except Exception as e:
             error_msg = str(e)
             print(f"Error processing repository: {error_msg}")
-            self.db.rollback()
+            await self.db.rollback()
             
             # Update repository record to mark as failed
             try:
                 owner, repo_name = parse_github_repo_url(repo_url)
-                repo = self.db.query(Repository).filter(
-                    Repository.owner == owner,
-                    Repository.name == repo_name
-                ).first()
+                repo = (await self.db.execute(select(Repository).filter(Repository.owner == owner, Repository.name == repo_name))).scalar_one_or_none()
                 if repo:
                     repo.sync_status = "FAILED"
                     repo.error_message = error_msg
-                    self.db.commit()
+                    await self.db.commit()
             except Exception as inner:
                 print(f"Failed to update repository error state: {inner}")
                 
             raise
     
-    def _update_total_analysis(self, repo: Repository):
+    async def _update_total_analysis(self, repo: Repository):
         """Store or update aggregated analysis metrics for the repository."""
-        prs = self.db.query(PullRequest).filter(PullRequest.repo_id == repo.id).all()
+        prs_result = await self.db.execute(select(PullRequest).filter(PullRequest.repo_id == repo.id))
+        prs = prs_result.scalars().all()
         total_prs = len(prs)
         open_prs = sum(1 for pr in prs if pr.state == "OPEN")
         merged_prs = sum(1 for pr in prs if pr.state == "MERGED")
@@ -301,9 +295,7 @@ class DataProcessor:
                     created = created.replace(tzinfo=timezone.utc)
                 stale_pr_count += 1 if (now - created).days > 30 else 0
 
-        analysis = self.db.query(TotalAnalysis).filter(
-            TotalAnalysis.repo_id == repo.id
-        ).first()
+        analysis = (await self.db.execute(select(TotalAnalysis).filter(TotalAnalysis.repo_id == repo.id))).scalar_one_or_none()
 
         if analysis:
             analysis.repo_owner = repo.owner
@@ -376,7 +368,7 @@ class DataProcessor:
             ],
         }
 
-    def _score_pr_with_ml(self, pr: PullRequest):
+    async def _score_pr_with_ml(self, pr: PullRequest):
         """Create or refresh ML predictions for a stored PR."""
         ml_models = self._get_ml_models()
         if not ml_models:
@@ -398,7 +390,8 @@ class DataProcessor:
         # Do not fall back to heuristic scores here. Use only ML model outputs.
         # If the ML models are unavailable or prediction fails, no prediction is stored.
 
-        self.db.query(MLPrediction).filter(MLPrediction.pr_id == pr.id).delete(synchronize_session=False)
+        from sqlalchemy import delete
+        await self.db.execute(delete(MLPrediction).where(MLPrediction.pr_id == pr.id))
         prediction = MLPrediction(
             pr_id=pr.id,
             repo_owner=pr.repo_owner,
@@ -412,14 +405,14 @@ class DataProcessor:
         print(f"[ML] Refreshed predictions for PR {pr.pr_number}")
         return prediction
 
-    def refresh_ml_predictions(self, repo_id: int = None, only_open_prs: bool = True) -> int:
+    async def refresh_ml_predictions(self, repo_id: int = None, only_open_prs: bool = True) -> int:
         """Refresh stored ML predictions for existing PRs in the database."""
-        query = self.db.query(PullRequest)
+        query = select(PullRequest)
         if repo_id is not None:
             query = query.filter(PullRequest.repo_id == repo_id)
         if only_open_prs:
             query = query.filter(PullRequest.state == "OPEN")
-        prs = query.all()
+        prs = (await self.db.execute(query)).scalars().all()
 
         if not prs:
             print("[ML] No PRs found for prediction refresh.")
@@ -428,17 +421,17 @@ class DataProcessor:
         refreshed = 0
         for pr in prs:
             try:
-                if self._score_pr_with_ml(pr) is not None:
+                if await self._score_pr_with_ml(pr) is not None:
                     refreshed += 1
             except Exception as exc:
                 print(f"[ML WARNING] Could not refresh PR {pr.pr_number}: {exc}")
                 continue
 
-        self.db.commit()
+        await self.db.commit()
         print(f"[ML] Refreshed predictions for {refreshed} PR(s)")
         return refreshed
 
-    def _generate_predictions_safe(self, pr: PullRequest, parsed_pr: Dict):
+    async def _generate_predictions_safe(self, pr: PullRequest, parsed_pr: Dict):
         """Generate ML predictions safely - won't crash if ML fails.
 
         Feature engineering reads from both parsed_pr (fresh API values) and
@@ -543,9 +536,8 @@ class DataProcessor:
                     return
 
                 # ── Upsert: remove any stale prediction, then insert new one ──
-                self.db.query(MLPrediction).filter(MLPrediction.pr_id == pr.id).delete(
-                    synchronize_session=False
-                )
+                from sqlalchemy import delete
+                await self.db.execute(delete(MLPrediction).where(MLPrediction.pr_id == pr.id))
                 prediction = MLPrediction(
                     pr_id=pr.id,
                     repo_owner=pr.repo_owner,
@@ -571,21 +563,20 @@ class DataProcessor:
             # Don't crash - continue processing
 
     
-    def _update_contributor_stats(self, repo_id: int, repo: Repository = None):
+    async def _update_contributor_stats(self, repo_id: int, repo: Repository = None):
         """Update contributor statistics"""
         try:
             # Get repository if not provided
             if not repo:
-                repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+                repo = (await self.db.execute(select(Repository).filter(Repository.id == repo_id))).scalar_one_or_none()
                 if not repo:
                     print(f"[WARN] Repository {repo_id} not found for contributor stats")
                     return
             
             now = datetime.now(timezone.utc)
             
-            prs = self.db.query(PullRequest).filter(
-                PullRequest.repo_id == repo_id
-            ).all()
+            prs_result = await self.db.execute(select(PullRequest).filter(PullRequest.repo_id == repo_id))
+            prs = prs_result.scalars().all()
             
             print(f"[STATS] Processing {len(prs)} PRs for contributor stats...")
             
@@ -627,10 +618,7 @@ class DataProcessor:
             # Store or update contributors
             for username, stats in contributor_stats.items():
                 try:
-                    contributor = self.db.query(Contributor).filter(
-                        Contributor.repo_id == repo_id,
-                        Contributor.username == username
-                    ).first()
+                    contributor = (await self.db.execute(select(Contributor).filter(Contributor.repo_id == repo_id, Contributor.username == username))).scalar_one_or_none()
                     
                     avg_cycle = np.mean(stats["cycle_times"]) if stats["cycle_times"] else 0.0
                     avg_review = np.mean(stats["review_times"]) if stats["review_times"] else 0.0

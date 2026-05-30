@@ -47,8 +47,8 @@ class Repository(Base):
     owner = Column(String(255), nullable=False, index=True)
     name = Column(String(255), nullable=False, index=True)
     full_name = Column(String(511), unique=True, nullable=False, index=True)
-    url = Column(String(1024), unique=True, nullable=True)
-    source_url = Column(String(1024), nullable=True)
+    url = Column(String(512), unique=True, nullable=True)
+    source_url = Column(String(512), nullable=True)
 
     # Module 4 — Repo metadata
     description = Column(Text, nullable=True)

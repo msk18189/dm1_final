@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, Response, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -54,11 +54,11 @@ class CompareRequest(BaseModel):
 # Background sync (via SyncEngine)
 # ---------------------------------------------------------------------------
 
-def run_background_sync(repo_url: str, github_token: Optional[str], sync_mode: Optional[str] = None):
-    """Launch SyncEngine in background thread."""
+async def run_background_sync(repo_url: str, github_token: Optional[str], sync_mode: Optional[str] = None):
+    """Launch SyncEngine in background task."""
     try:
         from github.sync_engine import run_sync_in_background
-        run_sync_in_background(repo_url, github_token, sync_mode=sync_mode)
+        await run_sync_in_background(repo_url, github_token, sync_mode=sync_mode)
     except Exception as e:
         print(f"[Routes] Background sync error for {repo_url}: {e}")
 
@@ -476,6 +476,7 @@ async def get_repositories(db: AsyncSession = Depends(get_db)):
 async def analyze_repository(
     request: Request,
     payload: RepositoryRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ):
@@ -541,11 +542,7 @@ async def analyze_repository(
                 db.add(assoc)
                 await db.commit()
 
-        threading.Thread(
-            target=run_background_sync,
-            args=(url, token, sync_mode),
-            daemon=True
-        ).start()
+        background_tasks.add_task(run_background_sync, url, token, sync_mode)
 
         return {
             "owner": owner,
@@ -966,7 +963,7 @@ async def get_repo_health(repo_id: int, db: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/ml-status")
-def get_ml_status(db: AsyncSession = Depends(get_db)):
+async def get_ml_status(db: AsyncSession = Depends(get_db)):
     ml_models = MLModels()
     return {
         "models_exist": ml_models.models_exist(),
@@ -999,14 +996,14 @@ async def train_ml_models(db: AsyncSession = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/export/{repo_id}")
-def export_report(
+async def export_report(
     repo_id: int, days: Optional[int] = None, author: Optional[str] = None,
     state: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     try:
         ext = ExtendedAnalytics(db)
-        csv_content = ext.build_export_csv(repo_id, days, author, state, start_date, end_date)
+        csv_content = await ext.build_export_csv(repo_id, days, author, state, start_date, end_date)
         return StreamingResponse(
             io.StringIO(csv_content),
             media_type="text/csv",

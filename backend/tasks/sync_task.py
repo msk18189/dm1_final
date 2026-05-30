@@ -50,7 +50,7 @@ async def _run_sync_task_async(repo_url: str, github_token: str = None, user_id:
             logger.info(f"[SyncTask] Starting sync for {repo_url} (task_id={task_id})")
 
             # Run the sync (same function as before, uses its own DB session)
-            run_sync_in_background(repo_url, github_token)
+            await run_sync_in_background(repo_url, github_token)
 
             # Mark job complete
             if sync_job:

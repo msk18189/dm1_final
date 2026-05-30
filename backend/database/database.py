@@ -31,10 +31,6 @@ else:
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_NAME = os.getenv("DB_NAME", "github_analytics")
 
-# =========================================================
-# Async Engine Configuration
-# =========================================================
-
 engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     echo=False,
@@ -89,18 +85,11 @@ async def init_db():
     
     Flow:
     1. Create database if needed (via _create_database_async)
-    2. Create all tables (via SQLAlchemy metadata)
     """
     # Step 1: Create database (async operation)
     await _create_database_async()
     
-    # Step 2: Create tables
-    from database import models  
-    
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    print("[DB] All tables verified/created successfully.")
+    print("[DB] Database existence verified successfully.")
 
 
 async def get_db():

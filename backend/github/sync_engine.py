@@ -19,7 +19,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from database.database import async_session_maker
 from database.models import Repository
@@ -33,7 +33,7 @@ class SyncProgress:
     Writes progress updates to the Repository.sync_progress field.
     """
 
-    def __init__(self, db: Session, repo: Repository):
+    def __init__(self, db: AsyncSession, repo: Repository):
         self.db = db
         self.repo = repo
         self.started_at = time.time()
@@ -46,7 +46,7 @@ class SyncProgress:
         self.module_processed = 0
         self.module_discovered = 0
 
-    def update(self, message: str, module: str = None, processed: int = None,
+    async def update(self, message: str, module: str = None, processed: int = None,
                discovered: int = None, persist: bool = True):
         """Update progress message and optionally persist to DB."""
         if module:
@@ -63,10 +63,10 @@ class SyncProgress:
         if persist:
             try:
                 self.repo.sync_progress = full_msg[:512]
-                self.db.commit()
+                await self.db.commit()
             except Exception:
                 try:
-                    self.db.rollback()
+                    await self.db.rollback()
                 except Exception:
                     pass
 
@@ -102,7 +102,7 @@ class SyncProgress:
         h, m = divmod(m, 60)
         return f"{h}h {m}m"
 
-    def mark_module_done(self, module: str, count: int):
+    async def mark_module_done(self, module: str, count: int):
         self.modules_completed.append(module)
         self.module_counts[module] = count
         self.module_processed = 0
@@ -128,7 +128,7 @@ class SyncEngine:
     LIGHTWEIGHT_MAX_ISSUES = 100
     LIGHTWEIGHT_MAX_FORKS = 50
 
-    def __init__(self, db: Session, repo: Repository, gql_client, rest_client, sync_mode: Optional[str] = None):
+    def __init__(self, db: AsyncSession, repo: Repository, gql_client, rest_client, sync_mode: Optional[str] = None):
         self.db = db
         self.repo = repo
         self.gql = gql_client
@@ -140,7 +140,7 @@ class SyncEngine:
         self.lightweight_mode = (sync_mode == "lightweight")
         self.budget_exhausted = False
 
-    def run(self):
+    async def run(self):
         """
         Main sync orchestration method.
         Runs all modules in sequence. Module failures are isolated.
@@ -152,12 +152,13 @@ class SyncEngine:
             self.repo.sync_status = "VERIFYING"
             self.repo.sync_progress = "Verifying repository access and fetching metadata..."
             self.repo.sync_started_at = datetime.utcnow()
-            self.db.commit()
+            await self.db.commit()
 
             # Store initial estimates in repository database record for progress tracking and visibility
             try:
                 print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name}...")
-                estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
+                import asyncio
+                estimates = await asyncio.to_thread(self.rest.get_repository_estimates, self.owner, self.repo_name)
                 self.estimates = estimates
                 
                 has_token = bool(self.rest.token and self.rest.token.strip())
@@ -175,7 +176,7 @@ class SyncEngine:
                     self.repo.sync_mode = "full"
 
                 # Transition to SYNCING status
-                self._mark_syncing("Starting repository ingestion...")
+                await self._mark_syncing("Starting repository ingestion...")
 
                 # Update Repository record counts with estimated totals immediately
                 self.repo.total_prs = estimates.get("pr_count", 0)
@@ -201,7 +202,7 @@ class SyncEngine:
                 self.repo.synced_forks = 0
                 self.repo.synced_workflows = 0
 
-                self.db.commit()
+                await self.db.commit()
                 print(f"[SyncEngine] Initial estimates stored: prs={self.repo.total_prs}, issues={self.repo.total_issues}, branches={self.repo.total_branches}, forks={self.repo.total_forks}, workflows={self.repo.total_workflow_runs}, discussions={self.repo.total_discussions}")
             except Exception as e:
                 print(f"[SyncEngine] Failed to fetch or persist repository estimates: {e}")
@@ -211,61 +212,61 @@ class SyncEngine:
                 self.repo.expected_forks = 0
                 self.repo.expected_workflows = 0
                 self.lightweight_mode = False
-                self.db.commit()
+                await self.db.commit()
 
             # Calculate dynamic batch size once before sync starts
-            self.batch_size = self._calculate_dynamic_batch_size()
+            self.batch_size = await self._calculate_dynamic_batch_size()
 
             # Module 4 — Repository metadata (always first)
-            self._run_module("repository_metadata", self._sync_repository_metadata)
+            await self._run_module("repository_metadata", self._sync_repository_metadata)
 
             # Module 1 — Pull Requests (GraphQL, most complex)
-            self._run_module("pull_requests", self._sync_pull_requests)
+            await self._run_module("pull_requests", self._sync_pull_requests)
 
             # Module 2 — Issues
-            self._run_module("issues", self._sync_issues)
+            await self._run_module("issues", self._sync_issues)
 
             # Module 3 — Branches
             if not self.lightweight_mode:
-                self._run_module("branches", self._sync_branches)
+                await self._run_module("branches", self._sync_branches)
             else:
                 print("[SyncEngine] Branches module skipped in lightweight mode.")
-                self.progress.update("Branches skipped (lightweight mode)", module="branches", persist=True)
-                self.progress.mark_module_done("branches", 0)
+                await self.progress.update("Branches skipped (lightweight mode)", module="branches", persist=True)
+                await self.progress.mark_module_done("branches", 0)
 
             # Module 5 — Forks
             if not self.lightweight_mode:
-                self._run_module("forks", self._sync_forks)
+                await self._run_module("forks", self._sync_forks)
             else:
                 print("[SyncEngine] Forks module skipped in lightweight mode.")
-                self.progress.update("Forks skipped (lightweight mode)", module="forks", persist=True)
-                self.progress.mark_module_done("forks", 0)
+                await self.progress.update("Forks skipped (lightweight mode)", module="forks", persist=True)
+                await self.progress.mark_module_done("forks", 0)
 
             # Module 8 — CI/CD Workflows
             if not self.lightweight_mode:
-                self._run_module("workflows", self._sync_workflows)
+                await self._run_module("workflows", self._sync_workflows)
             else:
                 print("[SyncEngine] Workflows module skipped in lightweight mode.")
-                self.progress.update("Workflows skipped (lightweight mode)", module="workflows", persist=True)
-                self.progress.mark_module_done("workflows", 0)
+                await self.progress.update("Workflows skipped (lightweight mode)", module="workflows", persist=True)
+                await self.progress.mark_module_done("workflows", 0)
 
             # Module 6 — Discussions (GraphQL)
             if self.gql.token and not self.lightweight_mode:
-                self._run_module("discussions", self._sync_discussions)
+                await self._run_module("discussions", self._sync_discussions)
             else:
                 reason = "requires PAT" if not self.gql.token else "skipped in lightweight mode"
                 print(f"[SyncEngine] Discussions module skipped ({reason}).")
-                self.progress.update(f"Discussions skipped ({reason})", module="discussions", persist=True)
-                self.progress.mark_module_done("discussions", 0)
+                await self.progress.update(f"Discussions skipped ({reason})", module="discussions", persist=True)
+                await self.progress.mark_module_done("discussions", 0)
 
             # Module 7 — Projects v2 (GraphQL)
             if self.gql.token and not self.lightweight_mode:
-                self._run_module("projects", self._sync_projects)
+                await self._run_module("projects", self._sync_projects)
             else:
                 reason = "requires PAT" if not self.gql.token else "skipped in lightweight mode"
                 print(f"[SyncEngine] Projects module skipped ({reason}).")
-                self.progress.update(f"Projects skipped ({reason})", module="projects", persist=True)
-                self.progress.mark_module_done("projects", 0)
+                await self.progress.update(f"Projects skipped ({reason})", module="projects", persist=True)
+                await self.progress.mark_module_done("projects", 0)
 
             # Finalize
             duration = time.time() - sync_start
@@ -278,7 +279,7 @@ class SyncEngine:
             self.repo.last_successful_sync = datetime.utcnow()
             self.repo.initial_sync_completed = True
             self.repo.error_message = None
-            self.db.commit()
+            await self.db.commit()
             print(f"[SyncEngine] Completed {self.owner}/{self.repo_name} in {SyncProgress._fmt_duration(duration)}")
 
             # Ingestion validation checks & print telemetry logs
@@ -297,7 +298,7 @@ class SyncEngine:
         except GitHubRateLimitException as e:
             print(f"[SyncEngine] Rate limit hit. Gracefully downgrading and stopping sync: {e}")
             try:
-                self.db.rollback()
+                await self.db.rollback()
                 duration = time.time() - sync_start
                 self.repo.sync_status = "RATE_LIMITED"
                 self.repo.sync_mode = "partial"
@@ -306,7 +307,7 @@ class SyncEngine:
                 self.repo.sync_duration = duration
                 self.repo.last_synced_at = datetime.utcnow()
                 self.repo.initial_sync_completed = True
-                self.db.commit()
+                await self.db.commit()
             except Exception as db_err:
                 print(f"[SyncEngine] DB error during rate limit handling: {db_err}")
 
@@ -314,105 +315,105 @@ class SyncEngine:
             error_msg = str(e)
             print(f"[SyncEngine] Fatal error: {error_msg}")
             try:
-                self.db.rollback()
+                await self.db.rollback()
                 self.repo.sync_status = "FAILED"
                 self.repo.sync_error = error_msg
                 self.repo.error_message = error_msg
                 self.repo.sync_progress = f"Sync failed: {error_msg[:200]}"
-                self.db.commit()
+                await self.db.commit()
             except Exception:
                 pass
             raise
 
-    def _mark_syncing(self, msg: str):
+    async def _mark_syncing(self, msg: str):
         self.repo.sync_status = "SYNCING"
         self.repo.sync_progress = msg
-        self.db.commit()
+        await self.db.commit()
 
-    def _run_module(self, module_name: str, fn):
+    async def _run_module(self, module_name: str, fn):
         """Run a single module sync with transaction isolation and error isolation."""
         print(f"[SyncEngine] Starting module: {module_name}")
-        self.progress.update(f"Syncing {module_name.replace('_', ' ').title()}...", module=module_name)
+        await self.progress.update(f"Syncing {module_name.replace('_', ' ').title()}...", module=module_name)
         try:
             # Use a savepoint so module failure doesn't corrupt entire sync
-            savepoint = self.db.begin_nested()
+            savepoint = await self.db.begin_nested()
             try:
-                count = fn()
-                savepoint.commit()
+                count = await fn()
+                await savepoint.commit()
             except GitHubRateLimitException:
                 try:
-                    savepoint.rollback()
+                    await savepoint.rollback()
                 except Exception:
                     pass
                 raise
             except Exception as e:
                 print(f"[SyncEngine] Module {module_name} failed inside savepoint: {e}")
                 try:
-                    savepoint.rollback()
+                    await savepoint.rollback()
                 except Exception:
                     pass
                 raise
 
-            self.progress.mark_module_done(module_name, count)
+            await self.progress.mark_module_done(module_name, count)
             print(f"[SyncEngine] Module {module_name} done. Records: {count}")
 
             # Update synced counts from actual DB records (source of truth)
-            self._refresh_synced_telemetry(module_name)
+            await self._refresh_synced_telemetry(module_name)
 
         except GitHubRateLimitException as e:
             print(f"[SyncEngine] Rate limit exception in module {module_name}: {e}")
-            self._refresh_synced_telemetry(module_name)
+            await self._refresh_synced_telemetry(module_name)
             raise
         except Exception as e:
             print(f"[SyncEngine] Module {module_name} failed: {e}")
-            self.progress.update(f"{module_name} failed: {str(e)[:100]}", persist=True)
-            self._refresh_synced_telemetry(module_name)
+            await self.progress.update(f"{module_name} failed: {str(e)[:100]}", persist=True)
+            await self._refresh_synced_telemetry(module_name)
             try:
-                self.db.rollback()
+                await self.db.rollback()
             except Exception:
                 pass
 
-    def _refresh_synced_telemetry(self, module_name: str):
+    async def _refresh_synced_telemetry(self, module_name: str):
         """Update synced telemetry from actual DB record counts (source of truth)."""
         try:
             from database.models import PullRequest, Issue, Fork, Workflow
             if module_name == "pull_requests":
-                self.repo.synced_prs = self.db.query(PullRequest).filter(
-                    PullRequest.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(PullRequest.id)).where(PullRequest.repo_id == self.repo.id))
+                self.repo.synced_prs = res.scalar() or 0
                 self.repo.total_prs = self.repo.synced_prs
             elif module_name == "issues":
-                self.repo.synced_issues = self.db.query(Issue).filter(
-                    Issue.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(Issue.id)).where(Issue.repo_id == self.repo.id))
+                self.repo.synced_issues = res.scalar() or 0
                 self.repo.total_issues = self.repo.synced_issues
             elif module_name == "forks":
                 from database.models import Fork
-                self.repo.synced_forks = self.db.query(Fork).filter(
-                    Fork.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(Fork.id)).where(Fork.repo_id == self.repo.id))
+                self.repo.synced_forks = res.scalar() or 0
                 self.repo.total_forks = self.repo.synced_forks
             elif module_name == "workflows":
-                self.repo.synced_workflows = self.db.query(Workflow).filter(
-                    Workflow.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(Workflow.id)).where(Workflow.repo_id == self.repo.id))
+                self.repo.synced_workflows = res.scalar() or 0
             elif module_name == "branches":
                 from database.models import Branch
-                self.repo.total_branches = self.db.query(Branch).filter(
-                    Branch.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(Branch.id)).where(Branch.repo_id == self.repo.id))
+                self.repo.total_branches = res.scalar() or 0
             elif module_name == "discussions":
                 from database.models import Discussion
-                self.repo.total_discussions = self.db.query(Discussion).filter(
-                    Discussion.repo_id == self.repo.id).count()
+                res = await self.db.execute(select(func.count(Discussion.id)).where(Discussion.repo_id == self.repo.id))
+                self.repo.total_discussions = res.scalar() or 0
             elif module_name == "projects":
                 from database.models import Project
-                self.repo.total_projects = self.db.query(Project).filter(
-                    Project.repo_id == self.repo.id).count()
-            self.db.commit()
+                res = await self.db.execute(select(func.count(Project.id)).where(Project.repo_id == self.repo.id))
+                self.repo.total_projects = res.scalar() or 0
+            await self.db.commit()
         except Exception as e:
             print(f"[SyncEngine] Failed to refresh telemetry for {module_name}: {e}")
             try:
-                self.db.rollback()
+                await self.db.rollback()
             except Exception:
                 pass
 
-    def _calculate_dynamic_batch_size(self) -> int:
+    async def _calculate_dynamic_batch_size(self) -> int:
         """
         Estimate repository size and calculate batch size once before sync starts.
         Uses total PRs, issues, commits, contributors, workflows.
@@ -421,7 +422,8 @@ class SyncEngine:
         if not estimates:
             try:
                 print(f"[SyncEngine] Fetching repository estimates for {self.owner}/{self.repo_name} to compute batch size...")
-                estimates = self.rest.get_repository_estimates(self.owner, self.repo_name)
+                import asyncio
+                estimates = await asyncio.to_thread(self.rest.get_repository_estimates, self.owner, self.repo_name)
                 self.estimates = estimates
             except Exception as e:
                 print(f"[SyncEngine] Failed to fetch repository estimates: {e}. Falling back to DB repository stats or defaults.")
@@ -458,33 +460,33 @@ class SyncEngine:
         print(f"[SyncEngine] Calculated dynamic batch size: {batch_size} (representative size: {representative_size})")
         return batch_size
 
-    def _sync_repository_metadata(self) -> int:
+    async def _sync_repository_metadata(self) -> int:
         from github.modules.repository_metadata import sync_repository_metadata
-        return sync_repository_metadata(self.owner, self.repo_name, self.db, self.rest, self.gql, self.repo)
+        return await sync_repository_metadata(self.owner, self.repo_name, self.db, self.rest, self.gql, self.repo)
 
-    def _sync_pull_requests(self) -> int:
+    async def _sync_pull_requests(self) -> int:
         from github.modules.pull_requests import sync_pull_requests
         since = self.repo.last_successful_sync
         sync_since = None if self.lightweight_mode else since
-        return sync_pull_requests(
+        return await sync_pull_requests(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
             repo=self.repo, since=sync_since, progress=self.progress,
             batch_size=self.batch_size, lightweight_mode=self.lightweight_mode
         )
 
-    def _sync_issues(self) -> int:
+    async def _sync_issues(self) -> int:
         from github.modules.issues import sync_issues
         since = self.repo.last_successful_sync
         sync_since = None if self.lightweight_mode else since
-        return sync_issues(
+        return await sync_issues(
             self.owner, self.repo_name, self.db, self.rest, self.gql,
             repo=self.repo, since=sync_since, progress=self.progress,
             batch_size=self.batch_size, lightweight_mode=self.lightweight_mode
         )
 
-    def _sync_branches(self) -> int:
+    async def _sync_branches(self) -> int:
         from github.modules.branches import sync_branches
-        return sync_branches(
+        return await sync_branches(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, progress=self.progress,
             batch_size=self.batch_size
@@ -494,9 +496,9 @@ class SyncEngine:
     # MODULE 5 — Forks
     # ------------------------------------------------------------------
 
-    def _sync_forks(self) -> int:
+    async def _sync_forks(self) -> int:
         from github.modules.forks import sync_forks
-        return sync_forks(
+        return await sync_forks(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, progress=self.progress,
             batch_size=self.batch_size
@@ -506,10 +508,10 @@ class SyncEngine:
     # MODULE 8 — CI/CD Workflows
     # ------------------------------------------------------------------
 
-    def _sync_workflows(self) -> int:
+    async def _sync_workflows(self) -> int:
         from github.modules.workflows import sync_workflows
         since = self.repo.last_successful_sync
-        return sync_workflows(
+        return await sync_workflows(
             self.owner, self.repo_name, self.db, self.rest,
             repo=self.repo, since=since, progress=self.progress,
             batch_size=self.batch_size
@@ -519,9 +521,9 @@ class SyncEngine:
     # MODULE 6 — Discussions (GraphQL)
     # ------------------------------------------------------------------
 
-    def _sync_discussions(self) -> int:
+    async def _sync_discussions(self) -> int:
         from github.modules.discussions import sync_discussions
-        return sync_discussions(
+        return await sync_discussions(
             self.owner, self.repo_name, self.db, self.gql,
             repo=self.repo, progress=self.progress,
             batch_size=self.batch_size
@@ -531,66 +533,61 @@ class SyncEngine:
     # MODULE 7 — Projects v2 (GraphQL)
     # ------------------------------------------------------------------
 
-    def _sync_projects(self) -> int:
+    async def _sync_projects(self) -> int:
         from github.modules.projects import sync_projects
-        return sync_projects(
+        return await sync_projects(
             self.owner, self.repo_name, self.db, self.gql,
             repo=self.repo, rest_client=self.rest, progress=self.progress,
             batch_size=self.batch_size
         )
 
 
-def run_sync_in_background(repo_url: str, github_token: Optional[str] = None, sync_mode: Optional[str] = None):
-    """
-    Entry point for background thread execution.
-    Creates its own DB session, runs the full sync engine, cleans up.
-    """
+
+async def run_sync_in_background(repo_url: str, github_token: Optional[str] = None, sync_mode: Optional[str] = None):
     from services.data_processor import parse_github_repo_url
     from github.client import GitHubClient, GitHubRestClient
 
-    db = SessionLocal()
-    try:
-        owner, repo_name = parse_github_repo_url(repo_url)
-        token = (github_token or "").strip() or None
-
-        repo = db.query(Repository).filter(
-            Repository.owner == owner,
-            Repository.name == repo_name
-        ).first()
-
-        if not repo:
-            print(f"[SyncEngine] Repository {owner}/{repo_name} not found in DB. Aborting.")
-            return
-
-        gql_client = GitHubClient(token=token)
-        rest_client = GitHubRestClient(token=token)
-
-        engine = SyncEngine(db, repo, gql_client, rest_client, sync_mode=sync_mode)
-        engine.run()
-
-        # After sync: update contributor stats and total analysis
+    async with async_session_maker() as db:
         try:
-            from services.data_processor import DataProcessor
-            processor = DataProcessor(db)
-            processor._update_contributor_stats(repo.id, repo)
-            processor._update_total_analysis(repo)
-            db.commit()
-        except Exception as e:
-            print(f"[SyncEngine] Post-sync analytics update failed: {e}")
+            owner, repo_name = parse_github_repo_url(repo_url)
+            token = (github_token or "").strip() or None
 
-        try:
-            from services.data_processor import DataProcessor as DP
-            ml_processor = DP(db)
-            if ml_processor._get_ml_models():
-                print(f"[SyncEngine] Running ML inference for repo {owner}/{repo_name}...")
-                count = ml_processor.refresh_ml_predictions(repo_id=repo.id, only_open_prs=True)
-                print(f"[SyncEngine] ML inference complete: {count} prediction(s) generated.")
-            else:
-                print("[SyncEngine] ML models unavailable — skipping post-sync inference.")
-        except Exception as e:
-            print(f"[SyncEngine] Post-sync ML inference failed (non-fatal): {e}")
+            repo = (await db.execute(select(Repository).filter(
+                Repository.owner == owner,
+                Repository.name == repo_name
+            ))).scalar_one_or_none()
 
-    except Exception as e:
-        print(f"[SyncEngine] Background sync error for {repo_url}: {e}")
-    finally:
-        db.close()
+            if not repo:
+                print(f"[SyncEngine] Repository {owner}/{repo_name} not found in DB. Aborting.")
+                return
+
+            gql_client = GitHubClient(token=token)
+            rest_client = GitHubRestClient(token=token)
+
+            engine = SyncEngine(db, repo, gql_client, rest_client, sync_mode=sync_mode)
+            await engine.run()
+
+            # After sync: update contributor stats and total analysis
+            try:
+                from services.data_processor import DataProcessor
+                processor = DataProcessor(db)
+                await processor._update_contributor_stats(repo.id, repo)
+                await processor._update_total_analysis(repo)
+                await db.commit()
+            except Exception as e:
+                print(f"[SyncEngine] Post-sync analytics update failed: {e}")
+
+            try:
+                from services.data_processor import DataProcessor as DP
+                ml_processor = DP(db)
+                if await asyncio.to_thread(ml_processor._get_ml_models):
+                    print(f"[SyncEngine] Running ML inference for repo {owner}/{repo_name}...")
+                    count = await ml_processor.refresh_ml_predictions(repo_id=repo.id, only_open_prs=True)
+                    print(f"[SyncEngine] ML inference complete: {count} prediction(s) generated.")
+                else:
+                    print("[SyncEngine] ML models unavailable — skipping post-sync inference.")
+            except Exception as e:
+                print(f"[SyncEngine] Post-sync ML inference failed (non-fatal): {e}")
+
+        except Exception as e:
+            print(f"[SyncEngine] Background sync error for {repo_url}: {e}")
