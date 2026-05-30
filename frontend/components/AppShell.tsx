@@ -117,8 +117,8 @@ export default function AppShell({
     return () => clearTimeout(t)
   }, [])
 
-  const handleSignOut = () => {
-    signOut()
+  const handleSignOut = async () => {
+    await signOut()
     router.replace('/login')
   }
 

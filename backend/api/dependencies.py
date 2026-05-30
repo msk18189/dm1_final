@@ -6,21 +6,25 @@ Provides:
 - require_repo_access: validate user can access a given repo
 """
 from typing import Optional
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from database.database import get_db
 from database.models import User, UserRepository, Repository
 from api.auth import decode_access_token
 
-def _extract_user(authorization: Optional[str], db: Session) -> Optional[User]:
+def _extract_user(request: Request, authorization: Optional[str], db: Session) -> Optional[User]:
     """Decode bearer token and return User object, or None."""
-    if not authorization:
+    token = request.cookies.get("accessToken")
+    
+    if not token and authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+            
+    if not token:
         return None
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-    token = parts[1]
+        
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         return None
@@ -29,22 +33,24 @@ def _extract_user(authorization: Optional[str], db: Session) -> Optional[User]:
 
 
 def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> User:
     """Require authenticated user — raises 401 if not valid."""
-    user = _extract_user(authorization, db)
+    user = _extract_user(request, authorization, db)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
 
 def get_current_user_optional(
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
     """Return authenticated user or None — for endpoints that work both ways."""
-    return _extract_user(authorization, db)
+    return _extract_user(request, authorization, db)
 
 
 def require_repo_access(

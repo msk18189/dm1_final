@@ -8,14 +8,7 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:800
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
-})
-
-api.interceptors.request.use((config) => {
-  const token = getAuthToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
+  withCredentials: true,
 })
 
 function filterParams(filters?: DashboardFiltersState) {

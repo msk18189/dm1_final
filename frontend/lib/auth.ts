@@ -1,95 +1,46 @@
-const AUTH_TOKEN_KEY = 'prism_auth_token'
-
-function decodeJwt(token: string): any {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    const payload = parts[1]
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    )
-    return JSON.parse(jsonPayload)
-  } catch (e) {
-    return null
-  }
-}
+import { api } from './api'
 
 export function saveAuthToken(token: string): void {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(AUTH_TOKEN_KEY, token)
-  } catch (err) {
-    console.error('Failed to save auth token', err)
-  }
+  // Handled by backend setting the HttpOnly cookie
 }
 
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    return localStorage.getItem(AUTH_TOKEN_KEY)
-  } catch {
-    return null
-  }
+  // Can no longer access token directly since it's HttpOnly
+  return null
 }
 
-export function getAuthUser(): Promise<{ username: string; email?: string } | null> {
+export async function getAuthUser(): Promise<{ username: string; email?: string } | null> {
   if (typeof window === 'undefined') return Promise.resolve(null)
   try {
-    const token = localStorage.getItem(AUTH_TOKEN_KEY)
-    if (!token) return Promise.resolve(null)
-    
-    const payload = decodeJwt(token)
-    if (!payload) return Promise.resolve(null)
-    
-    // Auto logout if expired
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      signOut()
-      return Promise.resolve(null)
+    const res = await api.get('/api/auth/me')
+    if (res.data) {
+      return {
+        username: res.data.username,
+        email: res.data.email,
+      }
     }
-    
-    return Promise.resolve({
-      username: payload.sub || '',
-      email: payload.email || '',
-    })
+    return Promise.resolve(null)
   } catch (err) {
-    console.error('Failed to get auth user', err)
     return Promise.resolve(null)
   }
 }
 
 export function isAuthenticated(): boolean {
   if (typeof window === 'undefined') return false
-  try {
-    const token = localStorage.getItem(AUTH_TOKEN_KEY)
-    if (!token) return false
-    
-    const payload = decodeJwt(token)
-    if (!payload) return false
-    
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      signOut()
-      return false
-    }
-    
-    return true
-  } catch {
-    return false
-  }
+  return document.cookie.includes('isAuthenticated=true')
 }
 
-export function signOut(): void {
+export async function signOut(): Promise<void> {
   if (typeof window === 'undefined') return
   try {
-    localStorage.removeItem(AUTH_TOKEN_KEY)
+    await api.post('/api/auth/logout')
     localStorage.removeItem('prism_repo_id')
     localStorage.removeItem('prism_repo_label')
     localStorage.removeItem('prism_active_section')
     localStorage.removeItem('prism_dashboard_route')
+    // We could reload or let the frontend router handle redirects on its own
   } catch (err) {
     console.error('Failed to clear session', err)
   }
 }
+

@@ -1,24 +1,27 @@
-const STORAGE_KEY = 'github_pr_dashboard_token'
+import { api } from './api'
 
 export function loadGithubToken(): string {
-  if (typeof window === 'undefined') return ''
-  try {
-    return sessionStorage.getItem(STORAGE_KEY) || ''
-  } catch {
-    return ''
-  }
+  // Can no longer access token directly since it's HttpOnly
+  return ''
 }
 
-export function saveGithubToken(token: string): void {
+let saveTimeout: any;
+
+export async function saveGithubToken(token: string): Promise<void> {
   if (typeof window === 'undefined') return
-  try {
-    const trimmed = token.trim()
-    if (trimmed) {
-      sessionStorage.setItem(STORAGE_KEY, trimmed)
-    } else {
-      sessionStorage.removeItem(STORAGE_KEY)
+  
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(async () => {
+    try {
+      const trimmed = token.trim()
+      if (trimmed) {
+        await api.post('/api/auth/github-token', { token: trimmed })
+      } else {
+        await api.post('/api/auth/logout-github-token')
+      }
+    } catch {
+      // Ignore errors for now
     }
-  } catch {
-    // sessionStorage unavailable
-  }
+  }, 500);
 }
+

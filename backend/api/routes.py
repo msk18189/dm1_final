@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database.database import get_db, SessionLocal
@@ -18,6 +18,7 @@ from typing import Optional
 import io
 import threading
 from playwright.async_api import async_playwright
+from api.dependencies import get_current_user
 
 router = APIRouter()
 
@@ -75,7 +76,7 @@ def run_background_sync(repo_url: str, github_token: Optional[str], sync_mode: O
 # ---------------------------------------------------------------------------
 
 @router.post("/api/auth/signup", response_model=TokenResponse)
-def signup(payload: UserSignup, db: Session = Depends(get_db)):
+def signup(payload: UserSignup, response: Response, db: Session = Depends(get_db)):
     """Register a new user, hash password, and return a JWT."""
     if payload.confirm_password is not None and payload.password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
@@ -106,6 +107,10 @@ def signup(payload: UserSignup, db: Session = Depends(get_db)):
     
     # Generate token
     token = create_access_token({"sub": new_user.username, "email": new_user.email})
+    
+    response.set_cookie(key="accessToken", value=token, httponly=True, secure=True, samesite="strict", path="/")
+    response.set_cookie(key="isAuthenticated", value="true", httponly=False, secure=True, samesite="strict", path="/")
+    
     return TokenResponse(
         access_token=token,
         username=new_user.username,
@@ -113,8 +118,9 @@ def signup(payload: UserSignup, db: Session = Depends(get_db)):
     )
 
 
+
 @router.post("/api/auth/login", response_model=TokenResponse)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(payload: UserLogin, response: Response, db: Session = Depends(get_db)):
     """Authenticate with username or email, verify password, and return a JWT."""
     ident = payload.username_or_email.strip()
     
@@ -127,11 +133,47 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid username, email, or password.")
         
     token = create_access_token({"sub": user.username, "email": user.email})
+    
+    response.set_cookie(key="accessToken", value=token, httponly=True, secure=True, samesite="strict", path="/")
+    response.set_cookie(key="isAuthenticated", value="true", httponly=False, secure=True, samesite="strict", path="/")
+    
     return TokenResponse(
         access_token=token,
         username=user.username,
         email=user.email
     )
+
+@router.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(key="accessToken", path="/", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie(key="githubToken", path="/", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie(key="isAuthenticated", path="/", secure=True, samesite="strict")
+    return {"message": "Logged out"}
+
+class GithubTokenPayload(BaseModel):
+    token: str
+
+@router.post("/api/auth/github-token")
+def set_github_token(payload: GithubTokenPayload, response: Response):
+    response.set_cookie(
+        key="githubToken",
+        value=payload.token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/"
+    )
+    return {"message": "Token saved"}
+
+@router.post("/api/auth/logout-github-token")
+def logout_github_token(response: Response):
+    response.delete_cookie(key="githubToken", path="/", secure=True, httponly=True, samesite="strict")
+    return {"message": "Token removed"}
+
+@router.get("/api/auth/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {"username": current_user.username, "email": current_user.email}
+
 
 
 # ---------------------------------------------------------------------------
@@ -139,10 +181,10 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/verify-repo")
-def verify_repository(request: RepositoryRequest, db: Session = Depends(get_db)):
+def verify_repository(request: Request, payload: RepositoryRequest, db: Session = Depends(get_db)):
     """Verify repository accessibility and fetch basic metadata including API usage estimates."""
-    url = request.url.strip()
-    user_token = (request.github_token or "").strip() or None
+    url = payload.url.strip()
+    user_token = (payload.github_token or "").strip() or request.cookies.get("githubToken") or None
     token_source = "user" if user_token else "none"
 
     from github.client import GitHubClient, GitHubRestClient
@@ -346,23 +388,24 @@ def get_repositories(db: Session = Depends(get_db)):
 
 @router.post("/api/analyze")
 def analyze_repository(
-    request: RepositoryRequest,
+    request: Request,
+    payload: RepositoryRequest,
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ):
     """Trigger full repository ingestion via SyncEngine (background)."""
     try:
-        url = request.url.strip()
+        url = payload.url.strip()
         owner, repo_name = parse_github_repo_url(url)
         canonical_url = normalize_github_url(owner, repo_name)
-        token = (request.github_token or "").strip() or None
-        sync_mode = (request.sync_mode or "").strip() or None
+        token = (payload.github_token or "").strip() or request.cookies.get("githubToken") or None
+        sync_mode = (payload.sync_mode or "").strip() or None
 
         # Extract authenticated user (optional)
         current_user = None
-        if authorization:
+        if authorization or request.cookies.get("accessToken"):
             from api.dependencies import _extract_user
-            current_user = _extract_user(authorization, db)
+            current_user = _extract_user(request, authorization, db)
 
         repo = db.query(Repository).filter(
             Repository.owner == owner,
