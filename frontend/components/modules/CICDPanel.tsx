@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react'
 import { Zap, CheckCircle2, XCircle, AlertTriangle, Clock, Activity, Play, ShieldAlert, Server } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getCICDAnalytics, getWorkflowRuns } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
  
@@ -43,18 +45,30 @@ export default function CICDPanel({ repoId, syncStatus }: Props) {
       {/* KPI Cards row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label: 'Total Runs', value: syncStatus ? formatTelemetry(syncStatus.synced_workflows || syncStatus.total_workflow_runs, syncStatus.expected_workflows) : (summary ? formatTelemetry(summary.synced_workflows || summary.total_runs, summary.expected_workflows) : '—'), sub: 'Runs (30d)', icon: <Zap className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Successful', value: (summary?.successful_runs ?? 0).toLocaleString(), sub: 'Passed runs', icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Failed', value: (summary?.failed_runs ?? 0).toLocaleString(), sub: 'Errored builds', icon: <XCircle className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
-          { label: 'Success Rate', value: `${summary?.success_rate ?? 0}%`, sub: 'Reliability metric', icon: <Activity className="h-4 w-4 text-violet-500" />, accent: 'border-violet-100/30 dark:border-violet-950/40 bg-violet-50/40 dark:bg-violet-950/20 text-violet-800 dark:text-violet-400' },
-          { label: 'Avg Duration', value: `${summary?.avg_duration_minutes ?? 0}m`, sub: 'Average build time', icon: <Clock className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
-          { label: 'Flaky Workflows', value: summary?.flaky_workflows ?? 0, sub: '> 20% failure rate', icon: <AlertTriangle className="h-4 w-4 text-orange-500" />, accent: 'border-orange-100/30 dark:border-orange-950/40 bg-orange-50/40 dark:bg-orange-950/20 text-orange-850 dark:text-orange-400' },
-          { label: 'Cancelled', value: (summary?.cancelled_runs ?? 0).toLocaleString(), sub: 'Aborted runs', icon: <XCircle className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
-        ].map((card) => (
+          { label: 'Total Runs', tooltipKey: 'totalRuns', value: syncStatus ? formatTelemetry(syncStatus.synced_workflows || syncStatus.total_workflow_runs, syncStatus.expected_workflows) : (summary ? formatTelemetry(summary.synced_workflows || summary.total_runs, summary.expected_workflows) : '—'), sub: 'Runs (30d)', icon: <Zap className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Successful', tooltipKey: 'successfulRuns', value: (summary?.successful_runs ?? 0).toLocaleString(), sub: 'Passed runs', icon: <CheckCircle2 className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Failed', tooltipKey: 'failedRuns', value: (summary?.failed_runs ?? 0).toLocaleString(), sub: 'Errored builds', icon: <XCircle className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
+          { label: 'Success Rate', tooltipKey: 'successRate', value: `${summary?.success_rate ?? 0}%`, sub: 'Reliability metric', icon: <Activity className="h-4 w-4 text-violet-500" />, accent: 'border-violet-100/30 dark:border-violet-950/40 bg-violet-50/40 dark:bg-violet-950/20 text-violet-800 dark:text-violet-400' },
+          { label: 'Avg Duration', tooltipKey: 'avgDuration', value: `${summary?.avg_duration_minutes ?? 0}m`, sub: 'Average build time', icon: <Clock className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
+          { label: 'Flaky Workflows', tooltipKey: 'flakyWorkflows', value: summary?.flaky_workflows ?? 0, sub: '> 20% failure rate', icon: <AlertTriangle className="h-4 w-4 text-orange-500" />, accent: 'border-orange-100/30 dark:border-orange-950/40 bg-orange-50/40 dark:bg-orange-950/20 text-orange-850 dark:text-orange-400' },
+          { label: 'Cancelled', tooltipKey: 'cancelledRuns', value: (summary?.cancelled_runs ?? 0).toLocaleString(), sub: 'Aborted runs', icon: <XCircle className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-1.5 ${card.accent}`}>
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-bold uppercase tracking-wider text-muted">{card.label}</span>
-              {card.icon}
+              <div className="flex items-center gap-2">
+                {card.tooltipKey ? (
+                  <Tooltip
+                    content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                    position="left"
+                    showIcon={false}
+                  >
+                    <span className="cursor-help p-0.5 flex items-center">{card.icon}</span>
+                  </Tooltip>
+                ) : (
+                  card.icon
+                )}
+              </div>
             </div>
             <div className="space-y-0.5">
               <span className="text-lg font-black tracking-tight leading-none text-primary block">{card.value}</span>
@@ -70,7 +84,9 @@ export default function CICDPanel({ repoId, syncStatus }: Props) {
         {/* Trend Area Chart */}
         {trend.length > 0 && (
           <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-primary mb-1">30-Day Success Trend</h3>
+            <div className="mb-1">
+              <h3 className="text-sm font-bold text-primary">30-Day Success Trend</h3>
+            </div>
             <p className="text-[10px] text-muted font-semibold mb-4">Ingestion health of builds and pipeline runs</p>
             
             <ResponsiveContainer width="100%" height={180}>
@@ -88,7 +104,7 @@ export default function CICDPanel({ repoId, syncStatus }: Props) {
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
                 <XAxis dataKey="date" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} tickFormatter={(v: string) => v.slice(5)} axisLine={false} tickLine={false} />
                 <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+                <RechartsTooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
                 <Legend verticalAlign="top" height={36} iconSize={8} wrapperStyle={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)' }} />
                 <Area type="monotone" dataKey="success" name="Passed" stroke="#10b981" strokeWidth={2} fill="url(#successGrad)" />
                 <Area type="monotone" dataKey="failure" name="Failed" stroke="#ef4444" strokeWidth={2} fill="url(#failureGrad)" />

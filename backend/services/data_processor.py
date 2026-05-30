@@ -448,7 +448,7 @@ class DataProcessor:
         try:
             ml_models = self._get_ml_models()
             if not ml_models:
-                print(f"[ML SKIP] Skipping ML predictions for PR {pr.pr_number}")
+                print(f"Skipping ML predictions for PR {pr.pr_number}")
                 return
 
             # Prepare features with validation

@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react'
 import { Heart, Shield, Zap, GitPullRequest, CircleDot, GitBranch, MessageCircle, AlertTriangle, CheckCircle, Info, Loader2, ShieldAlert } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip } from 'recharts'
+import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts'
 import { getRepoHealth } from '@/lib/api'
 import { useTheme } from '@/components/ThemeProvider'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
  
 interface Props { repoId: number; repoLabel: string }
  
@@ -37,14 +39,30 @@ const componentIcons: Record<string, React.ReactNode> = {
 const componentMaxes: Record<string, number> = {
   pull_requests: 20, ci_cd: 25, branches: 15, issues: 20, community: 10, visibility: 10,
 }
+
+// Map component keys to tooltip content
+const componentTooltips: Record<string, keyof typeof METRIC_TOOLTIPS> = {
+  pull_requests: 'pullRequestsScore',
+  ci_cd: 'cicdScore',
+  branches: 'branchesScore',
+  issues: 'issuesScore',
+  community: 'communityScore',
+  visibility: 'visibilityScore',
+}
  
-function ScoreBar({ name, score, max }: { name: string; score: number; max: number }) {
+function ScoreBar({ name, score, max, tooltip }: { name: string; score: number; max: number; tooltip?: any }) {
   const pct = max > 0 ? (score / max) * 100 : 0
   const color = pct >= 80 ? 'bg-emerald-500' : pct >= 55 ? 'bg-indigo-500' : pct >= 35 ? 'bg-amber-500' : 'bg-rose-500'
   return (
     <div className="flex items-center gap-3">
       <div className="flex items-center gap-1.5 w-32 shrink-0 text-xs font-semibold text-secondary">
-        <span className="text-muted">{componentIcons[name]}</span>
+        {tooltip ? (
+          <Tooltip content={tooltip} position="right" showIcon={false}>
+            <span className="text-muted cursor-help">{componentIcons[name]}</span>
+          </Tooltip>
+        ) : (
+          <span className="text-muted">{componentIcons[name]}</span>
+        )}
         <span className="capitalize">{name.replace('_', ' ')}</span>
       </div>
       <div className="flex-1 h-2 bg-background rounded-full overflow-hidden">
@@ -128,12 +146,24 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
  
         {/* Detailed stats bars */}
         <div className="flex-1 min-w-0 space-y-3">
-          <h2 className="text-sm font-bold text-primary uppercase tracking-wider">Repository Health breakdown</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-bold text-primary uppercase tracking-wider">Repository Health breakdown</h2>
+          </div>
           <p className="text-xs text-muted font-semibold">{repoLabel}</p>
           <div className="space-y-2.5">
-            {Object.entries(components).map(([key, val]) => (
-              <ScoreBar key={key} name={key} score={val as number} max={componentMaxes[key] ?? 20} />
-            ))}
+            {Object.entries(components).map(([key, val]) => {
+              const tooltipKey = componentTooltips[key]
+              const tooltipContent = tooltipKey ? METRIC_TOOLTIPS[tooltipKey] : undefined
+              return (
+                <ScoreBar 
+                  key={key} 
+                  name={key} 
+                  score={val as number} 
+                  max={componentMaxes[key] ?? 20}
+                  tooltip={tooltipContent}
+                />
+              )
+            })}
           </div>
         </div>
  
@@ -144,7 +174,7 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
               <RadarChart data={radarData} outerRadius={75}>
                 <PolarGrid stroke={gridStroke} />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 8, fontWeight: 700, fill: labelFill }} />
-                <Tooltip 
+                <RechartsTooltip 
                   contentStyle={{ 
                     borderRadius: 12, 
                     border: '1px solid var(--border-primary)', 
@@ -165,9 +195,11 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
         
         {/* Recommendations block */}
         <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4">
-          <div>
-            <h3 className="text-sm font-bold text-primary mb-1">Executive Recommendations</h3>
-            <p className="text-[10px] text-muted font-semibold">Actionable suggestions to improve engineering metrics</p>
+          <div className="flex items-center gap-2">
+            <div>
+              <h3 className="text-sm font-bold text-primary mb-1">Executive Recommendations</h3>
+              <p className="text-[10px] text-muted font-semibold">Actionable suggestions to improve engineering metrics</p>
+            </div>
           </div>
  
           <div className="space-y-2.5">
@@ -190,7 +222,9 @@ export default function RepoHealthPanel({ repoId, repoLabel }: Props) {
  
         {/* Metadata info cards list */}
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4">
-          <h3 className="text-sm font-bold text-primary mb-1">Repository Details</h3>
+          <div>
+            <h3 className="text-sm font-bold text-primary">Repository Details</h3>
+          </div>
           <div className="space-y-3">
             {[
               { label: 'Visibility', value: health?.visibility ?? '—', icon: <Shield className="h-4 w-4 text-indigo-500" /> },

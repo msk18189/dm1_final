@@ -1,10 +1,19 @@
+<<<<<<< HEAD
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, Response
+=======
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from database.database import get_db, SessionLocal
-from database.models import Repository, PullRequest, Contributor, User
-from api.auth import UserSignup, UserLogin, TokenResponse, hash_password, verify_password, create_access_token
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from database.database import get_db
+from database.models import Repository, PullRequest, Contributor, User, RefreshToken
+from api.auth import (
+    UserSignup, UserLogin, TokenResponse, RefreshTokenRequest,
+    hash_password, verify_password, create_access_token, create_refresh_token_value,
+    REFRESH_TOKEN_EXPIRE_DAYS
+)
 from ml.models import MLModels
 from services.data_processor import DataProcessor, parse_github_repo_url, normalize_github_url
 from services.extended_analytics import ExtendedAnalytics
@@ -13,7 +22,7 @@ from services.module_analytics import (
     CICDAnalytics, DiscussionAnalytics, ProjectAnalytics, RepoHealthAnalytics
 )
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import io
 import threading
@@ -23,16 +32,7 @@ from api.dependencies import get_current_user
 router = APIRouter()
 
 def normalize_telemetry_counts(synced: int, expected: int) -> tuple:
-    """Normalize telemetry (synced, expected) into a safe renderable pair.
 
-    Returns (safe_synced, safe_expected):
-    - If expected <= 0 AND synced <= 0: returns (0, 0) → frontend renders "—"
-    - If expected <= 0 AND synced > 0: returns (synced, synced) → shows "N / N"
-    - If synced > expected: clamps expected up to synced
-    - Otherwise: returns (synced, expected) as-is
-
-    Frontend contract: if safe_expected == 0, render "—" instead of "0 / 0".
-    """
     s = synced if synced is not None else 0
     exp = expected if expected is not None else 0
     if exp <= 0 and s <= 0:
@@ -40,11 +40,6 @@ def normalize_telemetry_counts(synced: int, expected: int) -> tuple:
     if exp <= 0 and s > 0:
         return (s, s)
     return (s, max(exp, s))
-
-
-# ---------------------------------------------------------------------------
-# Request schemas
-# ---------------------------------------------------------------------------
 
 class RepositoryRequest(BaseModel):
     url: str
@@ -76,8 +71,13 @@ def run_background_sync(repo_url: str, github_token: Optional[str], sync_mode: O
 # ---------------------------------------------------------------------------
 
 @router.post("/api/auth/signup", response_model=TokenResponse)
+<<<<<<< HEAD
 def signup(payload: UserSignup, response: Response, db: Session = Depends(get_db)):
     """Register a new user, hash password, and return a JWT."""
+=======
+async def signup(payload: UserSignup, db: AsyncSession = Depends(get_db)):
+    """Register a new user, hash password, and return access + refresh tokens."""
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     if payload.confirm_password is not None and payload.password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
         
@@ -85,9 +85,13 @@ def signup(payload: UserSignup, response: Response, db: Session = Depends(get_db
     email = payload.email.strip().lower()
     
     # Check if user already exists
-    existing_user = db.query(User).filter(
-        (User.username == username) | (User.email == email)
-    ).first()
+    result = await db.execute(
+        select(User).where(
+            (User.username == username) | (User.email == email)
+        )
+    )
+    existing_user = result.scalar_one_or_none()
+    
     if existing_user:
         if existing_user.username == username:
             raise HTTPException(status_code=400, detail="Username already exists.")
@@ -102,17 +106,36 @@ def signup(payload: UserSignup, response: Response, db: Session = Depends(get_db
         password_hash=hashed
     )
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    await db.flush()
+    await db.refresh(new_user)
     
+    # Generate access token
+    access_token, expires_in = create_access_token({"sub": new_user.username, "email": new_user.email})
+    
+    # Generate and store refresh token
+    refresh_token_value = create_refresh_token_value()
+    refresh_token_expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token = RefreshToken(
+        user_id=new_user.id,
+        token_value=refresh_token_value,
+        expires_at=refresh_token_expires
+    )
+    db.add(refresh_token)
+    await db.commit()
+    
+<<<<<<< HEAD
     # Generate token
     token = create_access_token({"sub": new_user.username, "email": new_user.email})
     
     response.set_cookie(key="accessToken", value=token, httponly=True, secure=True, samesite="strict", path="/")
     response.set_cookie(key="isAuthenticated", value="true", httponly=False, secure=True, samesite="strict", path="/")
     
+=======
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     return TokenResponse(
-        access_token=token,
+        access_token=access_token,
+        refresh_token=refresh_token_value,
+        expires_in=expires_in,
         username=new_user.username,
         email=new_user.email
     )
@@ -120,25 +143,115 @@ def signup(payload: UserSignup, response: Response, db: Session = Depends(get_db
 
 
 @router.post("/api/auth/login", response_model=TokenResponse)
+<<<<<<< HEAD
 def login(payload: UserLogin, response: Response, db: Session = Depends(get_db)):
     """Authenticate with username or email, verify password, and return a JWT."""
+=======
+async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)):
+    """Authenticate with username or email, verify password, and return access + refresh tokens."""
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     ident = payload.username_or_email.strip()
     
     # Query by username or email
-    user = db.query(User).filter(
-        (User.username == ident) | (User.email == ident.lower())
-    ).first()
+    result = await db.execute(
+        select(User).where(
+            (User.username == ident) | (User.email == ident.lower())
+        )
+    )
+    user = result.scalar_one_or_none()
     
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username, email, or password.")
         
+<<<<<<< HEAD
     token = create_access_token({"sub": user.username, "email": user.email})
     
     response.set_cookie(key="accessToken", value=token, httponly=True, secure=True, samesite="strict", path="/")
     response.set_cookie(key="isAuthenticated", value="true", httponly=False, secure=True, samesite="strict", path="/")
+=======
+    # Generate access token
+    access_token, expires_in = create_access_token({"sub": user.username, "email": user.email})
+    
+    # Generate and store refresh token
+    refresh_token_value = create_refresh_token_value()
+    refresh_token_expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token = RefreshToken(
+        user_id=user.id,
+        token_value=refresh_token_value,
+        expires_at=refresh_token_expires
+    )
+    db.add(refresh_token)
+    await db.commit()
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     
     return TokenResponse(
-        access_token=token,
+        access_token=access_token,
+        refresh_token=refresh_token_value,
+        expires_in=expires_in,
+        username=user.username,
+        email=user.email
+    )
+
+
+@router.post("/api/auth/refresh", response_model=TokenResponse)
+async def refresh_access_token(payload: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    """Exchange a refresh token for a new access token.
+    
+    - Validates that the refresh token exists, is not revoked, and has not expired
+    - Returns a new short-lived access token
+    - Optionally rotates the refresh token (issues a new one)
+    """
+    # Find the refresh token in the database
+    result = await db.execute(
+        select(RefreshToken).where(
+            (RefreshToken.token_value == payload.refresh_token) & (RefreshToken.revoked == False)
+        )
+    )
+    refresh_token = result.scalar_one_or_none()
+    
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Invalid or revoked refresh token.")
+    
+    # Check if the refresh token has expired
+    if refresh_token.expires_at < datetime.now(timezone.utc):
+        # Mark as revoked if expired
+        refresh_token.revoked = True
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Refresh token has expired.")
+    
+    # Get the associated user
+    result = await db.execute(
+        select(User).where(User.id == refresh_token.user_id)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found.")
+    
+    # Generate new access token
+    access_token, expires_in = create_access_token({"sub": user.username, "email": user.email})
+    
+    # Optional: Rotate the refresh token (issue a new one)
+    # This is a security best practice to reduce the window of exposure
+    new_refresh_token_value = create_refresh_token_value()
+    new_refresh_token_expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # Revoke the old refresh token
+    refresh_token.revoked = True
+    
+    # Create the new refresh token
+    new_refresh_token = RefreshToken(
+        user_id=user.id,
+        token_value=new_refresh_token_value,
+        expires_at=new_refresh_token_expires
+    )
+    db.add(new_refresh_token)
+    await db.commit()
+    
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token_value,
+        expires_in=expires_in,
         username=user.username,
         email=user.email
     )
@@ -181,7 +294,11 @@ def get_me(current_user: User = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/verify-repo")
+<<<<<<< HEAD
 def verify_repository(request: Request, payload: RepositoryRequest, db: Session = Depends(get_db)):
+=======
+async def verify_repository(request: RepositoryRequest, db: AsyncSession = Depends(get_db)):
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     """Verify repository accessibility and fetch basic metadata including API usage estimates."""
     url = payload.url.strip()
     user_token = (payload.github_token or "").strip() or request.cookies.get("githubToken") or None
@@ -346,10 +463,12 @@ def verify_repository(request: Request, payload: RepositoryRequest, db: Session 
 
 
 @router.get("/api/repositories")
-def get_repositories(db: Session = Depends(get_db)):
+@router.get("/api/repositories")
+async def get_repositories(db: AsyncSession = Depends(get_db)):
     """List all analyzed repositories with module record counts."""
     try:
-        repos = db.query(Repository).all()
+        result = await db.execute(select(Repository))
+        repos = result.scalars().all()
         res = []
         for r in repos:
             res.append({
@@ -387,10 +506,16 @@ def get_repositories(db: Session = Depends(get_db)):
 
 
 @router.post("/api/analyze")
+<<<<<<< HEAD
 def analyze_repository(
     request: Request,
     payload: RepositoryRequest,
     db: Session = Depends(get_db),
+=======
+async def analyze_repository(
+    request: RepositoryRequest,
+    db: AsyncSession = Depends(get_db),
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
     authorization: Optional[str] = Header(None),
 ):
     """Trigger full repository ingestion via SyncEngine (background)."""
@@ -405,12 +530,18 @@ def analyze_repository(
         current_user = None
         if authorization or request.cookies.get("accessToken"):
             from api.dependencies import _extract_user
+<<<<<<< HEAD
             current_user = _extract_user(request, authorization, db)
+=======
+            current_user = await _extract_user(authorization, db)
+>>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
 
-        repo = db.query(Repository).filter(
-            Repository.owner == owner,
-            Repository.name == repo_name
-        ).first()
+        result = await db.execute(
+            select(Repository).where(
+                (Repository.owner == owner) & (Repository.name == repo_name)
+            )
+        )
+        repo = result.scalar_one_or_none()
 
         if not repo:
             full_name = f"{owner}/{repo_name}"
@@ -425,21 +556,25 @@ def analyze_repository(
                 sync_progress="Enqueuing background ingestion job...",
             )
             db.add(repo)
-            db.commit()
-            db.refresh(repo)
+            await db.flush()
+            await db.refresh(repo)
         else:
             repo.sync_status = "PENDING"
             repo.sync_progress = "Enqueuing background ingestion job..."
-            db.commit()
-            db.refresh(repo)
+        
+        await db.commit()
+        await db.refresh(repo)
 
         # Associate repo with authenticated user
         if current_user:
             from database.models import UserRepository
-            existing_assoc = db.query(UserRepository).filter(
-                UserRepository.user_id == current_user.id,
-                UserRepository.repo_id == repo.id,
-            ).first()
+            result = await db.execute(
+                select(UserRepository).where(
+                    (UserRepository.user_id == current_user.id) & (UserRepository.repo_id == repo.id)
+                )
+            )
+            existing_assoc = result.scalar_one_or_none()
+            
             if not existing_assoc:
                 assoc = UserRepository(
                     user_id=current_user.id,
@@ -447,7 +582,7 @@ def analyze_repository(
                     role="owner",
                 )
                 db.add(assoc)
-                db.commit()
+                await db.commit()
 
         threading.Thread(
             target=run_background_sync,
@@ -472,9 +607,27 @@ def analyze_repository(
 @router.get("/api/sync-status/{repo_id}")
 def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
     """Get sync status, progress (with ETA), and per-module record counts."""
+    from datetime import datetime, timedelta, timezone
+    from config import SYNC_INTERVAL_MINUTES
+    
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
+    
+    # Helper to ensure ISO string has timezone info
+    def to_iso_with_tz(dt):
+        if not dt:
+            return None
+        # If datetime is naive, treat as UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    
+    # Calculate next sync time
+    next_sync_at = None
+    if repo.last_successful_sync:
+        next_sync_at = repo.last_successful_sync + timedelta(minutes=SYNC_INTERVAL_MINUTES)
+    
     return {
         "id": repo.id,
         "owner": repo.owner,
@@ -484,10 +637,11 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "sync_mode": getattr(repo, "sync_mode", "full") or "full",
         "sync_progress": repo.sync_progress,
         "sync_duration": repo.sync_duration,
-        "sync_started_at": repo.sync_started_at.isoformat() if getattr(repo, "sync_started_at", None) else None,
+        "sync_started_at": to_iso_with_tz(getattr(repo, "sync_started_at", None)),
         "initial_sync_completed": repo.initial_sync_completed,
-        "last_synced_at": repo.last_synced_at.isoformat() if repo.last_synced_at else None,
-        "last_successful_sync": repo.last_successful_sync.isoformat() if repo.last_successful_sync else None,
+        "last_synced_at": to_iso_with_tz(repo.last_synced_at),
+        "last_successful_sync": to_iso_with_tz(repo.last_successful_sync),
+        "next_sync_at": to_iso_with_tz(next_sync_at),
         "error_message": repo.error_message,
         "total_prs": repo.total_prs,
         "total_issues": repo.total_issues,
@@ -506,7 +660,7 @@ def get_sync_status(repo_id: int, db: Session = Depends(get_db)):
         "synced_workflows": normalize_telemetry_counts(repo.synced_workflows, repo.expected_workflows)[0],
         "rate_limit_remaining": repo.rate_limit_remaining,
         "rate_limit_limit": repo.rate_limit_limit,
-        "rate_limit_reset": repo.rate_limit_reset.isoformat() if repo.rate_limit_reset else None,
+        "rate_limit_reset": to_iso_with_tz(repo.rate_limit_reset),
     }
 
 
@@ -812,6 +966,11 @@ def get_discussions(repo_id: int, page: int = 1, limit: int = 20, db: Session = 
 def get_discussions_analytics(repo_id: int, db: Session = Depends(get_db)):
     """Discussion analytics summary."""
     return DiscussionAnalytics(db).get_summary(repo_id)
+
+@router.get("/api/discussions/timeline/{repo_id}")
+def get_discussions_timeline(repo_id: int, db: Session = Depends(get_db)):
+    """Discussion activity timeline over time."""
+    return DiscussionAnalytics(db).get_activity_timeline(repo_id)
 
 
 # ---------------------------------------------------------------------------

@@ -3,17 +3,18 @@
 import { useState, useEffect } from 'react'
 import { GitBranch, Shield, Clock, Activity, AlertTriangle, ChevronRight, RefreshCw, GitFork, BookOpen } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getBranchesAnalytics, getBranches } from '@/lib/api'
  
 interface Props { repoId: number }
  
-const FILTERS = ['all', 'active', 'protected', 'stale'] as const
+const FILTERS = ['all', 'active', 'inactive', 'stale', 'protected'] as const
  
-const healthColors: Record<string, string> = {
+const statusColors: Record<string, string> = {
   active: 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-250 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-bold',
-  moderate: 'bg-amber-50 dark:bg-amber-950/20 border-amber-250 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 font-bold',
-  inactive: 'bg-orange-50 dark:bg-orange-950/20 border-orange-250 dark:border-orange-900/30 text-orange-700 dark:text-orange-400 font-bold',
+  inactive: 'bg-amber-50 dark:bg-amber-950/20 border-amber-250 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 font-bold',
   stale: 'bg-rose-50 dark:bg-rose-950/20 border-rose-250 dark:border-rose-900/30 text-rose-700 dark:text-rose-400 font-bold',
   unknown: 'bg-surface-soft border-border text-muted',
 }
@@ -34,10 +35,9 @@ export default function BranchesPanel({ repoId }: Props) {
     getBranches(repoId, page, 20, filter).then(setBranches).catch(console.error)
   }, [repoId, page, filter])
  
-  // Map summary numbers to a beautiful bar chart representation
+  // Activity-only chart — Protected is independent metadata, not an activity state
   const chartData = summary ? [
     { name: 'Active', count: summary.active_branches ?? 0, color: '#10b981' },
-    { name: 'Protected', count: summary.protected_branches ?? 0, color: '#6366f1' },
     { name: 'Inactive', count: summary.inactive_branches ?? 0, color: '#f59e0b' },
     { name: 'Stale', count: summary.stale_branches ?? 0, color: '#ef4444' },
   ] : []
@@ -45,41 +45,54 @@ export default function BranchesPanel({ repoId }: Props) {
   return (
     <div className="space-y-6">
  
-      {/* KPI row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* KPI row — 5 cards: Total, Active, Inactive, Stale, Protected */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
-          { label: 'Total Branches', value: summary?.total_branches ?? 0, sub: 'Repository total', icon: <GitBranch className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Active', value: summary?.active_branches ?? 0, sub: 'Commits <= 7 days', icon: <Activity className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Protected', value: summary?.protected_branches ?? 0, sub: 'Merge rules apply', icon: <Shield className="h-4 w-4 text-purple-500" />, accent: 'border-purple-100/30 dark:border-purple-950/40 bg-purple-50/40 dark:bg-purple-950/20 text-purple-800 dark:text-purple-400' },
-          { label: 'Inactive', value: summary?.inactive_branches ?? 0, sub: '30+ days stale', icon: <Clock className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
-          { label: 'Stale', value: summary?.stale_branches ?? 0, sub: '90+ days stale', icon: <AlertTriangle className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
-          { label: 'Stale Rate', value: `${summary?.stale_rate ?? 0}%`, sub: 'Backlog proportion', icon: <AlertTriangle className="h-4 w-4 text-orange-500" />, accent: 'border-orange-100/30 dark:border-orange-950/40 bg-orange-50/40 dark:bg-orange-950/20 text-orange-850 dark:text-orange-400' },
-        ].map((card) => (
+          { label: 'Total Branches', tooltipKey: 'totalBranches', value: summary?.total_branches ?? 0, sub: 'Repository total', icon: <GitBranch className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Active', tooltipKey: 'activeBranches', value: summary?.active_branches ?? 0, sub: 'Last commit ≤ 30 days', icon: <Activity className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Inactive', tooltipKey: 'inactiveBranches', value: summary?.inactive_branches ?? 0, sub: 'Last commit 31–89 days', icon: <Clock className="h-4 w-4 text-amber-500" />, accent: 'border-amber-100/30 dark:border-amber-950/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400' },
+          { label: 'Stale', tooltipKey: 'staleBranches', value: summary?.stale_branches ?? 0, sub: 'Last commit ≥ 90 days', icon: <AlertTriangle className="h-4 w-4 text-rose-500" />, accent: 'border-rose-100/30 dark:border-rose-950/40 bg-rose-50/40 dark:bg-rose-950/20 text-rose-800 dark:text-rose-400' },
+          { label: 'Protected', tooltipKey: 'protectedBranches', value: summary?.protected_branches ?? 0, sub: 'Merge rules apply', icon: <Shield className="h-4 w-4 text-purple-500" />, accent: 'border-purple-100/30 dark:border-purple-950/40 bg-purple-50/40 dark:bg-purple-950/20 text-purple-800 dark:text-purple-400' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex flex-col justify-between gap-1.5 ${card.accent}`}>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted">{card.label}</span>
-              {card.icon}
+              <div className="flex items-center gap-2">
+                {card.tooltipKey ? (
+                  <Tooltip
+                    content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                    position="left"
+                    showIcon={false}
+                  >
+                    <span className="cursor-help p-0.5 flex items-center">{card.icon}</span>
+                  </Tooltip>
+                ) : (
+                  card.icon
+                )}
+              </div>
             </div>
             <div className="space-y-0.5">
-              <span className="text-xl font-black tracking-tight leading-none text-primary block">{card.value.toLocaleString()}</span>
+              <span className="text-xl font-black tracking-tight leading-none text-primary block">{typeof card.value === 'number' ? card.value.toLocaleString() : card.value}</span>
               <span className="text-[9px] font-semibold text-muted">{card.sub}</span>
             </div>
           </div>
         ))}
       </div>
  
-      {/* Branch breakdown bar chart */}
+      {/* Branch Activity Breakdown chart — Active / Inactive / Stale only */}
       {summary && summary.total_branches > 0 && (
         <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-primary mb-1">Branch Activity Breakdown</h3>
-          <p className="text-[10px] text-muted font-semibold mb-4">Total active versus stale codebase pathways</p>
+          <div className="mb-1">
+            <h3 className="text-sm font-bold text-primary">Branch Activity Breakdown</h3>
+          </div>
+          <p className="text-[10px] text-muted font-semibold mb-4">Active · Inactive · Stale — mutually exclusive by last commit date</p>
           
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-muted)" vertical={false} />
               <XAxis dataKey="name" stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
               <YAxis stroke="var(--border-primary)" tick={{ fontSize: 9, fontWeight: 600, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
+              <RechartsTooltip contentStyle={{ borderRadius: 12, border: '1px solid var(--border-primary)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', fontSize: 11 }} />
               <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} />
@@ -112,7 +125,7 @@ export default function BranchesPanel({ repoId }: Props) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-surface-soft">
-                {['Branch', 'Health Status', 'Protected', 'Last Commit Message', 'Author', 'Days Stale'].map(h => (
+                {['Branch', 'Status', 'Protected', 'Last Commit Message', 'Author', 'Days Stale'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted">{h}</th>
                 ))}
               </tr>
@@ -127,8 +140,8 @@ export default function BranchesPanel({ repoId }: Props) {
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${healthColors[b.health] ?? healthColors.unknown}`}>
-                      {b.health}
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusColors[b.status] ?? statusColors.unknown}`}>
+                      {b.status ?? '—'}
                     </span>
                   </td>
                   <td className="px-4 py-2.5">

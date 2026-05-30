@@ -1,11 +1,11 @@
 import csv
 import io
 from datetime import datetime, timezone,timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func, case, and_, or_
 from sqlalchemy.orm import Session
 
-from database.models import MLPrediction, PullRequest, Repository
+from database.models import MLPrediction, PullRequest, Repository, PRReview, PRCommit
 from services.filters import (
     PRFilterParams,
     ensure_utc,
@@ -17,10 +17,6 @@ from services.filters import (
 )
 from services.analytics import AnalyticsService, _ensure_utc, _iso_week_key, _month_key
 from services.analytics import _month_range, _format_month_label, _week_range, _week_label
-
-
-
-
 
 def _filters_from_params(
     days: Optional[int] = None,
@@ -36,6 +32,66 @@ class ExtendedAnalytics:
     def __init__(self, db: Session):
         self.db = db
         self.base = AnalyticsService(db)
+
+    def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
+        """
+        Get the latest activity timestamp for a PR based on:
+        1. Latest review submission
+        2. Latest commit
+        3. PR updated_at
+        4. PR created_at (fallback)
+        
+        This is the true last activity timestamp, not the creation date.
+        """
+        timestamps = []
+        
+        if pr.updated_at:
+            timestamps.append(ensure_utc(pr.updated_at))
+        
+        # Get latest review timestamp for this PR
+        latest_review = self.db.query(func.max(PRReview.submitted_at)).filter(
+            PRReview.pr_id == pr.id
+        ).scalar()
+        if latest_review:
+            timestamps.append(ensure_utc(latest_review))
+        
+        # Get latest commit timestamp for this PR
+        latest_commit = self.db.query(func.max(PRCommit.committed_at)).filter(
+            PRCommit.pr_id == pr.id
+        ).scalar()
+        if latest_commit:
+            timestamps.append(ensure_utc(latest_commit))
+        
+        # If no other activity, use created_at
+        if pr.created_at:
+            timestamps.append(ensure_utc(pr.created_at))
+        
+        return max(timestamps) if timestamps else None
+
+    def _get_inactivity_days(self, pr: PullRequest) -> int:
+        """Calculate days since last activity on a PR."""
+        latest_activity = self._get_latest_activity_timestamp(pr)
+        if not latest_activity:
+            return 0
+        now = ensure_utc(datetime.utcnow())
+        return (now - latest_activity).days
+
+    def _get_stale_severity(self, inactivity_days: int) -> str:
+        """
+        Classify PR inactivity into operational tiers:
+        - healthy: 0-7 days inactive
+        - warning: 7-30 days inactive
+        - stale: 30-60 days inactive
+        - critical: 60+ days inactive
+        """
+        if inactivity_days < 7:
+            return "healthy"
+        elif inactivity_days < 30:
+            return "warning"
+        elif inactivity_days < 60:
+            return "stale"
+        else:
+            return "critical"
 
     def get_kpi_with_duration(
         self,
@@ -55,8 +111,14 @@ class ExtendedAnalytics:
         # 1. counts
         total_count = self.db.query(func.count(subq.c.id)).scalar() or 0
         open_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN").scalar() or 0
-        stale_cutoff = datetime.utcnow() - timedelta(days=30)
-        stale_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN", subq.c.created_at < stale_cutoff).scalar() or 0
+        
+        open_prs = query.filter(PullRequest.state == "OPEN").all()
+        stale_count = 0
+        for pr in open_prs:
+            inactivity_days = self._get_inactivity_days(pr)
+            if inactivity_days >= 30:
+                stale_count += 1
+        
         merged_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "MERGED").scalar() or 0
         closed_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state.in_(["MERGED", "CLOSED"])).scalar() or 0
 
@@ -193,60 +255,84 @@ class ExtendedAnalytics:
 
     def get_contributors_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
-        
-        # define stale cutoff
-        stale_cutoff = datetime.utcnow() - timedelta(days=30)
 
-        # We start from the filtered query:
+        # We start from the filtered query
         query = get_filtered_prs_query(self.db, repo_id, filters)
-        subq = query.subquery()
-
-        # Now group by subq.c.author and aggregate:
-        agg_query = self.db.query(
-            subq.c.author.label("author"),
-            func.count(subq.c.id).label("total_prs"),
-            func.sum(case((subq.c.state == "MERGED", 1), else_=0)).label("merged_prs"),
-            func.sum(case((subq.c.state == "OPEN", 1), else_=0)).label("open_prs"),
-            func.sum(case((and_(subq.c.state == "OPEN", subq.c.created_at < stale_cutoff), 1), else_=0)).label("stale_prs"),
-            func.avg(case((subq.c.state == "MERGED", subq.c.cycle_time_days), else_=None)).label("avg_cycle"),
-            func.avg(subq.c.wait_for_review_hours).label("avg_wait")
-        ).filter(subq.c.author.isnot(None)).group_by(subq.c.author)
+        all_prs = query.all()
         
-        # Get total number of contributors
-        total_contributors = agg_query.count()
+        # Group PRs by author and calculate stats
+        author_stats: Dict[str, Dict[str, Any]] = {}
         
-        # Sort and paginate
-        agg_query = agg_query.order_by(func.count(subq.c.id).desc())
-        offset = (page - 1) * limit
-        results = agg_query.offset(offset).limit(limit).all()
-        
-        formatted_results = []
-        for r in results:
-            author = r.author
-            total_prs = r.total_prs
-            merged_prs = int(r.merged_prs or 0)
-            open_prs = int(r.open_prs or 0)
-            stale_pr_count = int(r.stale_prs or 0)
+        for pr in all_prs:
+            author = pr.author
+            if not author:
+                continue
             
-            avg_cycle_days = float(r.avg_cycle) if r.avg_cycle is not None else None
+            if author not in author_stats:
+                author_stats[author] = {
+                    "total_prs": 0,
+                    "merged_prs": 0,
+                    "open_prs": 0,
+                    "stale_prs": 0,
+                    "cycle_times": [],
+                    "wait_times": [],
+                }
+            
+            author_stats[author]["total_prs"] += 1
+            
+            if pr.state == "MERGED":
+                author_stats[author]["merged_prs"] += 1
+                if pr.cycle_time_days is not None:
+                    author_stats[author]["cycle_times"].append(pr.cycle_time_days)
+            elif pr.state == "OPEN":
+                author_stats[author]["open_prs"] += 1
+                # Calculate stale status based on inactivity (not created_at)
+                inactivity_days = self._get_inactivity_days(pr)
+                if inactivity_days >= 30:
+                    author_stats[author]["stale_prs"] += 1
+            
+            if pr.wait_for_review_hours is not None and pr.wait_for_review_hours >= 0:
+                author_stats[author]["wait_times"].append(pr.wait_for_review_hours)
+        
+        # Calculate averages and format
+        formatted_results = []
+        for author, stats in author_stats.items():
+            total_prs = stats["total_prs"]
+            merged_prs = stats["merged_prs"]
+            open_prs = stats["open_prs"]
+            stale_prs = stats["stale_prs"]
+            
+            # Average cycle time (in days)
+            avg_cycle_days = (sum(stats["cycle_times"]) / len(stats["cycle_times"])) if stats["cycle_times"] else None
             avg_cycle_h = avg_cycle_days * 24 if avg_cycle_days is not None else None
             
-            avg_wait_h = float(r.avg_wait) if r.avg_wait is not None else None
+            # Average wait time (in hours)
+            avg_wait_h = (sum(stats["wait_times"]) / len(stats["wait_times"])) if stats["wait_times"] else None
             
             formatted_results.append({
                 "username": author,
                 "total_prs": total_prs,
                 "merged_prs": merged_prs,
                 "open_prs": open_prs,
+                "stale_prs": stale_prs,
                 "avg_cycle_time": round(avg_cycle_days, 2) if avg_cycle_days is not None else None,
                 "avg_cycle_time_display": format_duration(avg_cycle_h),
                 "avg_wait_for_review": round(avg_wait_h / 24, 2) if avg_wait_h is not None else None,
                 "merge_rate": round((merged_prs / total_prs * 100) if total_prs else 0, 2),
-                "stale_pr_count": stale_pr_count,
             })
+        
+        # Sort by total PRs (most productive contributors first)
+        formatted_results.sort(key=lambda x: x["total_prs"], reverse=True)
+        
+        # Get total number of unique authors
+        total_contributors = len(author_stats)
+        
+        # Paginate
+        offset = (page - 1) * limit
+        paginated_results = formatted_results[offset:offset+limit]
             
         return {
-            "data": formatted_results,
+            "data": paginated_results,
             "total": total_contributors,
             "page": page,
             "limit": limit,
@@ -451,82 +537,103 @@ class ExtendedAnalytics:
         }
 
     def get_stale_recommendations(self, repo_id: int, page: int = 1, limit: int = 10, stale_days: int = 30) -> Dict[str, Any]:
+        """
+        Detect stale PRs based on inactivity duration.
+        
+        A PR is STALE when:
+        - State = OPEN (excluding merged/closed/draft)
+        - No activity for X days (default 30)
+        - Where "activity" = max(updated_at, latest_commit, latest_review)
+        
+        Returns PRs with operational severity tiers:
+        - healthy: 0-7 days inactive
+        - warning: 7-30 days inactive
+        - stale: 30-60 days inactive
+        - critical: 60+ days inactive
+        """
         now = ensure_utc(datetime.utcnow())
-        cutoff_14 = datetime.utcnow() - timedelta(days=14)
         
-        query = self.db.query(PullRequest).filter(
+        # Get all OPEN, non-draft PRs for this repo
+        open_prs = self.db.query(PullRequest).filter(
             PullRequest.repo_id == repo_id,
-            PullRequest.state == "OPEN"
-        ).filter(
-            or_(
-                PullRequest.created_at < cutoff_14,
-                PullRequest.review_count == 0,
-                PullRequest.files_changed > 20,
-                and_(PullRequest.comment_count > 10, PullRequest.review_count < 2)
-            )
-        )
+            PullRequest.state == "OPEN",
+            PullRequest.draft == False
+        ).all()
         
-        prs = query.all()
-        alerts = []
-        for pr in prs:
-            if not pr.created_at:
+        stale_alerts = []
+        
+        for pr in open_prs:
+            # Calculate true inactivity (days since last activity)
+            inactivity_days = self._get_inactivity_days(pr)
+            severity = self._get_stale_severity(inactivity_days)
+            
+            # Only include PRs that are at least in "warning" state (7+ days inactive)
+            # This filters out healthy PRs and focuses on those needing attention
+            if severity not in ["warning", "stale", "critical"]:
                 continue
-            age_days = (now - ensure_utc(pr.created_at)).days
+            
+            # Build operational reasons based on inactivity
             reasons: List[str] = []
             actions: List[str] = []
-            severity = "low"
-
-            if age_days >= stale_days:
-                reasons.append(f"Open for {age_days} days (stale threshold: {stale_days}d)")
-                actions.append("Prioritize review or close if no longer needed")
-                severity = "high"
-            elif age_days >= 14:
-                reasons.append(f"Open for {age_days} days")
-                actions.append("Schedule review this week")
-                severity = "medium"
-
-            if (pr.review_count or 0) == 0:
-                reasons.append("No reviews yet")
-                actions.append("Assign a reviewer")
-                severity = "high" if severity != "high" else severity
-
-            if (pr.files_changed or 0) > 20:
-                reasons.append(f"Large change set ({pr.files_changed} files)")
-                actions.append("Split into smaller PRs for faster review")
-                if severity == "low":
-                    severity = "medium"
-
-            if (pr.comment_count or 0) > 10 and (pr.review_count or 0) < 2:
-                reasons.append("High discussion but few formal reviews")
-                actions.append("Request explicit approval from maintainers")
-
+            
+            if inactivity_days >= 60:
+                reasons.append(f"No activity for {inactivity_days} days (CRITICAL)")
+                actions.append("Prioritize review immediately or close if abandoned")
+                actions.append("Consider reaching out to author for status")
+            elif inactivity_days >= 30:
+                reasons.append(f"No activity for {inactivity_days} days (STALE)")
+                actions.append("Review or close PR to reduce technical debt")
+                actions.append("Ping author if PR is still relevant")
+            elif inactivity_days >= 7:
+                reasons.append(f"No activity for {inactivity_days} days (WARNING)")
+                actions.append("Monitor progress and request review if needed")
+            
+            # Add operational intelligence
+            if pr.review_count == 0:
+                reasons.append("No reviews received yet")
+                actions.append("Assign reviewer or request feedback")
+            elif pr.review_count > 0 and inactivity_days > 14:
+                reasons.append(f"Received {pr.review_count} review(s) but stalled")
+                actions.append("Address review feedback or discuss blockers")
+            
+            if pr.files_changed and pr.files_changed > 30:
+                reasons.append(f"Large changeset ({pr.files_changed} files) may be complex")
+                actions.append("Consider breaking into smaller PRs for faster review")
+            
+            # Ensure we have reasons and actions
             if not reasons:
-                continue
-
-            alerts.append({
+                reasons.append(f"Inactive for {inactivity_days} days")
+                actions.append("Review PR status and current relevance")
+            
+            stale_alerts.append({
                 "number": pr.pr_number,
                 "title": pr.title,
                 "author": pr.author,
-                "age_days": age_days,
-                "review_count": pr.review_count or 0,
-                "files_changed": pr.files_changed or 0,
+                "age_days": inactivity_days,  # True inactivity days
                 "severity": severity,
                 "reasons": reasons,
                 "recommended_actions": actions,
             })
-
-        order = {"high": 0, "medium": 1, "low": 2}
-        alerts.sort(key=lambda x: (order.get(x["severity"], 3), -x["age_days"]))
         
+        # Sort by severity (critical > stale > warning) then by inactivity age
+        severity_order = {"critical": 0, "stale": 1, "warning": 2}
+        stale_alerts.sort(
+            key=lambda x: (
+                severity_order.get(x["severity"], 3),
+                -x["age_days"]  # Oldest first within same severity
+            )
+        )
+        
+        # Paginate results
         offset = (page - 1) * limit
-        paginated_alerts = alerts[offset:offset+limit]
+        paginated_alerts = stale_alerts[offset:offset+limit]
         
         return {
             "data": paginated_alerts,
-            "total": len(alerts),
+            "total": len(stale_alerts),
             "page": page,
             "limit": limit,
-            "pages": (len(alerts) + limit - 1) // limit if limit else 1
+            "pages": (len(stale_alerts) + limit - 1) // limit if limit else 1
         }
 
     def compare_repos(self, repo_id_a: int, repo_id_b: int) -> Dict[str, Any]:

@@ -1,43 +1,127 @@
 import os
-import warnings
-from dotenv import load_dotenv
 
-load_dotenv()
-
-# ── GitHub API URLs (no global token — all access uses user PAT or anonymous) ──
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 GITHUB_REST_URL = "https://api.github.com"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "300"))   
-SYNC_RATE_LIMIT_BUFFER = int(os.getenv("SYNC_RATE_LIMIT_BUFFER", "50")) 
-STALE_PR_DAYS = 30
-STALE_ISSUE_DAYS = 30
-STALE_BRANCH_DAYS = 90
+SYNC_BATCH_SIZE = int(os.getenv("SYNC_BATCH_SIZE", "300"))
+SYNC_RATE_LIMIT_BUFFER = int(os.getenv("SYNC_RATE_LIMIT_BUFFER", "50"))
+SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", "60"))
 
-# ML Models
+# ── Stale Resource Thresholds (Environment-Driven) ──
+STALE_PR_DAYS = int(os.getenv("STALE_PR_DAYS", "30"))
+STALE_ISSUE_DAYS = int(os.getenv("STALE_ISSUE_DAYS", "30"))
+STALE_BRANCH_DAYS = int(os.getenv("STALE_BRANCH_DAYS", "90"))
+
+# ── ML Models Configuration (Environment-Driven) ──
 ML_MODELS_DIR = "ml/trained_models"
-ML_CONTAMINATION = 0.1
-ML_KMEANS_CLUSTERS = 3
+ML_CONTAMINATION = float(os.getenv("ML_CONTAMINATION", "0.1"))
+ML_KMEANS_CLUSTERS = int(os.getenv("ML_KMEANS_CLUSTERS", "3"))
 
-API_HOST = "127.0.0.1"
-API_PORT = 8000
-API_RELOAD = False
-API_WORKERS = 1
+# ── API Server Configuration (Environment-Driven) ──
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_PORT = int(os.getenv("API_PORT", "8000"))
 
-# ── JWT Authentication ──
-JWT_SECRET = os.getenv("JWT_SECRET", "")
-if not JWT_SECRET:
-    JWT_SECRET = "prism-secure-jwt-secret-key-change-in-prod-123456"
-    warnings.warn(
-        "JWT_SECRET not set in .env — using insecure default. "
-        "Set JWT_SECRET in production!",
-        stacklevel=2,
+_api_reload_raw = os.getenv("API_RELOAD", "false").lower().strip()
+if _api_reload_raw not in ("true", "false"):
+    raise ValueError(
+        f"[FATAL] API_RELOAD must be 'true' or 'false' (case-insensitive), got: '{_api_reload_raw}'"
+    )
+API_RELOAD: bool = _api_reload_raw == "true"
+
+_api_workers_raw = os.getenv("API_WORKERS", "1").strip()
+try:
+    _api_workers_int = int(_api_workers_raw)
+except ValueError:
+    raise ValueError(
+        f"[FATAL] API_WORKERS must be a positive integer, got: '{_api_workers_raw}'"
     )
 
+if _api_workers_int <= 0:
+    raise ValueError(
+        f"[FATAL] API_WORKERS must be > 0, got: {_api_workers_int}"
+    )
+
+# Auto-correct: reload mode requires exactly 1 worker
+if API_RELOAD and _api_workers_int > 1:
+    print(
+        f"[Config Warning] API_RELOAD=true cannot be used with API_WORKERS={_api_workers_int}. "
+        f"Auto-correcting to API_WORKERS=1 (reload mode requires single worker)."
+    )
+    API_WORKERS: int = 1
+else:
+    API_WORKERS: int = _api_workers_int
+
+print(f"[Config] API Server: reload={API_RELOAD}, workers={API_WORKERS}")
+
+_JWT_SECRET_MIN_LENGTH = 32
+
+_jwt_secret_raw = os.getenv("JWT_SECRET")
+
+if _jwt_secret_raw is None:
+    raise EnvironmentError(
+        "[FATAL] JWT_SECRET environment variable is required. "
+        "Set it in your .env file or system environment before starting."
+    )
+
+if _jwt_secret_raw.strip() == "":
+    raise EnvironmentError(
+        "[FATAL] JWT_SECRET environment variable must not be empty. "
+        "Provide a strong random secret of at least 32 characters."
+    )
+
+if len(_jwt_secret_raw.strip()) < _JWT_SECRET_MIN_LENGTH:
+    raise ValueError(
+        f"[FATAL] JWT_SECRET must be at least {_JWT_SECRET_MIN_LENGTH} characters long. "
+        f"Current length: {len(_jwt_secret_raw.strip())} characters. "
+        "Generate a strong secret with: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+
+JWT_SECRET: str = _jwt_secret_raw.strip()
+
+# ── Password Policy Configuration (Environment-Driven) ──
+# Enforce strong password requirements for user accounts
+PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
+PASSWORD_REQUIRE_UPPERCASE = os.getenv("PASSWORD_REQUIRE_UPPERCASE", "true").lower() == "true"
+PASSWORD_REQUIRE_LOWERCASE = os.getenv("PASSWORD_REQUIRE_LOWERCASE", "true").lower() == "true"
+PASSWORD_REQUIRE_DIGITS = os.getenv("PASSWORD_REQUIRE_DIGITS", "true").lower() == "true"
+PASSWORD_REQUIRE_SPECIAL = os.getenv("PASSWORD_REQUIRE_SPECIAL", "true").lower() == "true"
+
+# Validate password policy configuration
+if PASSWORD_MIN_LENGTH < 6:
+    raise ValueError(
+        f"[FATAL] PASSWORD_MIN_LENGTH must be at least 6, got: {PASSWORD_MIN_LENGTH}"
+    )
+
+if PASSWORD_MIN_LENGTH < 12:
+    print(
+        f"[Config Warning] PASSWORD_MIN_LENGTH={PASSWORD_MIN_LENGTH} is below recommended 12. "
+        f"Consider increasing to 12+ for production environments."
+    )
+
+# ── CORS Configuration — ENVIRONMENT-DRIVEN ──
+# Comma-separated list of allowed origins. No hardcoded domains.
+# Example: CORS_ORIGINS=http://localhost:3000,https://prism.company.com
+
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+
 CORS_ORIGINS = [
-    f"http://{host}:{port}"
-    for host in ("localhost", "127.0.0.1")
-    for port in range(3000, 3020)
+    origin.strip()
+    for origin in _cors_origins_raw.split(",")
+    if origin.strip()
 ]
+
+if not CORS_ORIGINS:
+    raise RuntimeError(
+        "[FATAL] At least one CORS origin must be configured. "
+        "Set CORS_ORIGINS in your .env file (comma-separated)."
+    )
+
+for _origin in CORS_ORIGINS:
+    if not _origin.startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"[FATAL] Invalid CORS origin: '{_origin}'. "
+            "Each origin must start with http:// or https://."
+        )

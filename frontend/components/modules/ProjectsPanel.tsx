@@ -1,8 +1,10 @@
 'use client'
  
 import { useState, useEffect } from 'react'
-import { Kanban, CheckCircle2, Circle, Clock, AlertCircle, TrendingUp, Calendar, ChevronRight } from 'lucide-react'
+import { Kanban, CheckCircle2, Circle, Clock, AlertCircle, TrendingUp, ChevronRight } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { Tooltip } from '@/components/ui/Tooltip'
+import { METRIC_TOOLTIPS } from '@/lib/tooltips'
 import { getProjectsAnalytics, getProjects } from '@/lib/api'
 import { formatTelemetry } from '@/lib/format'
  
@@ -22,16 +24,7 @@ export default function ProjectsPanel({ repoId, syncStatus }: Props) {
   useEffect(() => {
     getProjects(repoId, page).then(setProjects).catch(console.error)
   }, [repoId, page])
- 
-  // Simulated milestones data for strategic planning dashboard feel
-  const milestones = [
-    { title: 'v2.0 Release', progress: 75, due: 'In 9 days', risk: 'Low', riskStyle: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/30' },
-    { title: 'Model Inference Optimization', progress: 60, due: 'In 12 days', risk: 'Medium', riskStyle: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border-amber-100 dark:border-amber-900/30' },
-    { title: 'Documentation Revamp', progress: 90, due: 'In 2 days', risk: 'Low', riskStyle: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/30' },
-    { title: 'Benchmark Suite', progress: 20, due: 'Overdue (3d ago)', risk: 'High', riskStyle: 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20 border-rose-100 dark:border-rose-900/30' },
-    { title: 'Training Pipeline Refactor', progress: 45, due: 'In 24 days', risk: 'Low', riskStyle: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/30' },
-  ]
- 
+
   return (
     <div className="space-y-6">
  
@@ -44,29 +37,45 @@ export default function ProjectsPanel({ repoId, syncStatus }: Props) {
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: 'Total Projects', value: syncStatus ? formatTelemetry(syncStatus.total_projects, 0) : (summary ? formatTelemetry(summary.total_projects, 0) : '—'), sub: 'Project boards', icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
-          { label: 'Open Boards', value: summary?.open_projects ?? 0, sub: 'Active planning', icon: <Circle className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
-          { label: 'Closed Boards', value: summary?.closed_projects ?? 0, sub: 'Archived boards', icon: <CheckCircle2 className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
-        ].map((card) => (
+          { label: 'Total Projects', tooltipKey: 'totalProjects', value: syncStatus ? formatTelemetry(syncStatus.total_projects, 0) : (summary ? formatTelemetry(summary.total_projects, 0) : '—'), sub: 'Project boards', icon: <Kanban className="h-4 w-4 text-indigo-500" />, accent: 'border-indigo-100/30 dark:border-indigo-950/40 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-400' },
+          { label: 'Open Boards', tooltipKey: 'openBoards', value: summary?.open_projects ?? 0, sub: 'Active planning', icon: <Circle className="h-4 w-4 text-emerald-500" />, accent: 'border-emerald-100/30 dark:border-emerald-950/40 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-400' },
+          { label: 'Closed Boards', tooltipKey: 'closedBoards', value: summary?.closed_projects ?? 0, sub: 'Archived boards', icon: <CheckCircle2 className="h-4 w-4 text-slate-400" />, accent: 'border-border bg-surface-soft/40 text-secondary' },
+        ].map((card: any) => (
           <div key={card.label} className={`rounded-xl border p-4 shadow-sm flex items-center justify-between gap-3 ${card.accent}`}>
             <div className="space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-muted block">{card.label}</span>
               <span className="text-2xl font-black tracking-tight leading-none text-primary block">{card.value}</span>
               <span className="text-[9px] font-semibold text-muted block">{card.sub}</span>
             </div>
-            <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0">
-              {card.icon}
+            <div className="flex items-center gap-2">
+              {card.tooltipKey ? (
+                <Tooltip
+                  content={METRIC_TOOLTIPS[card.tooltipKey as keyof typeof METRIC_TOOLTIPS]}
+                  position="left"
+                  showIcon={false}
+                >
+                  <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0 cursor-help">
+                    {card.icon}
+                  </div>
+                </Tooltip>
+              ) : (
+                <div className="p-2 bg-surface-soft rounded-lg border border-border shadow-sm shrink-0">
+                  {card.icon}
+                </div>
+              )}
             </div>
           </div>
         ))}
       </div>
  
-      {/* Main layout grid (Projects list & Milestones) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Main layout grid (Projects list) */}
+      <div className="grid grid-cols-1 gap-6">
         
         {/* Projects list */}
-        <div className="lg:col-span-2 rounded-2xl border border-border bg-surface p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-primary mb-1">Active Projects</h3>
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+          <div className="mb-1">
+            <h3 className="text-sm font-bold text-primary">Active Projects</h3>
+          </div>
           <p className="text-[10px] text-muted font-semibold mb-4">Board progress tracking and task status</p>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -121,37 +130,6 @@ export default function ProjectsPanel({ repoId, syncStatus }: Props) {
               <button disabled={page >= projects?.pages} onClick={() => setPage(p => p + 1)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-secondary transition hover:bg-bg-hover disabled:pointer-events-none disabled:opacity-40">Next &rarr;</button>
             </div>
           )}
-        </div>
- 
-        {/* Milestone analytics */}
-        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm flex flex-col justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-primary mb-1">Sprint Milestones</h3>
-            <p className="text-[10px] text-muted font-semibold mb-4">Milestone forecast & timeline tracking</p>
-          </div>
- 
-          <div className="space-y-4">
-            {milestones.map((m) => (
-              <div key={m.title} className="space-y-1.5">
-                <div className="flex items-start justify-between gap-2 text-[11px] font-semibold text-secondary">
-                  <span className="truncate pr-1 leading-tight">{m.title}</span>
-                  <span className={`shrink-0 px-2 py-0.5 rounded text-[9px] font-bold border ${m.riskStyle}`}>
-                    {m.risk} Risk
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${m.progress}%` }} />
-                  </div>
-                  <span className="text-[10px] font-bold text-primary w-8 text-right">{m.progress}%</span>
-                </div>
-                <div className="flex items-center gap-1 text-[9px] text-muted font-semibold">
-                  <Calendar className="h-3 w-3" />
-                  <span>{m.due}</span>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
  
       </div>

@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone, date
 from sqlalchemy.orm import Session
-from database.models import PullRequest, Contributor, Repository
+from database.models import PullRequest, Contributor, Repository, PRReview, PRCommit
 from sqlalchemy import func
 
 
@@ -96,6 +96,49 @@ class AnalyticsService:
     def __init__(self, db: Session):
         self.db = db
     
+    def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
+        """
+        Get the latest activity timestamp for a PR based on:
+        1. Latest review submission
+        2. Latest commit
+        3. PR updated_at
+        4. PR created_at (fallback)
+        
+        This is the true last activity timestamp, not the creation date.
+        """
+        timestamps = []
+        
+        if pr.updated_at:
+            timestamps.append(_ensure_utc(pr.updated_at))
+        
+        # Get latest review timestamp for this PR
+        latest_review = self.db.query(func.max(PRReview.submitted_at)).filter(
+            PRReview.pr_id == pr.id
+        ).scalar()
+        if latest_review:
+            timestamps.append(_ensure_utc(latest_review))
+        
+        # Get latest commit timestamp for this PR
+        latest_commit = self.db.query(func.max(PRCommit.committed_at)).filter(
+            PRCommit.pr_id == pr.id
+        ).scalar()
+        if latest_commit:
+            timestamps.append(_ensure_utc(latest_commit))
+        
+        # If no other activity, use created_at
+        if pr.created_at:
+            timestamps.append(_ensure_utc(pr.created_at))
+        
+        return max(timestamps) if timestamps else None
+
+    def _get_inactivity_days(self, pr: PullRequest) -> int:
+        """Calculate days since last activity on a PR."""
+        latest_activity = self._get_latest_activity_timestamp(pr)
+        if not latest_activity:
+            return 0
+        now = _ensure_utc(datetime.utcnow())
+        return (now - latest_activity).days
+    
     def get_open_pr_count(self, repo_id: int) -> int:
         return self.db.query(PullRequest).filter(
             PullRequest.repo_id == repo_id,
@@ -103,16 +146,26 @@ class AnalyticsService:
         ).count()
     
     def get_stale_pr_count(self, repo_id: int, days: int = 30) -> int:
-        cutoff_date = _ensure_utc(datetime.utcnow()) - timedelta(days=days)
+        """
+        Count stale PRs based on inactivity duration (not created_at).
+        
+        A PR is stale when:
+        - State = OPEN
+        - Inactive for >= days parameter (default 30)
+        - Where "inactive" = time since last activity (commit, review, update)
+        """
         open_prs = self.db.query(PullRequest).filter(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "OPEN",
         ).all()
-        return sum(
-            1
-            for pr in open_prs
-            if pr.created_at and _ensure_utc(pr.created_at) < cutoff_date
-        )
+        
+        stale_count = 0
+        for pr in open_prs:
+            inactivity_days = self._get_inactivity_days(pr)
+            if inactivity_days >= days:
+                stale_count += 1
+        
+        return stale_count
     
     def get_avg_cycle_time(self, repo_id: int) -> Optional[float]:
         result = self.db.query(func.avg(PullRequest.cycle_time_days)).filter(

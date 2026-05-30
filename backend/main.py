@@ -1,13 +1,16 @@
+import os
+import sys
+import asyncio
+from dotenv import load_dotenv
+load_dotenv()
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router
 from database.database import init_db
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD, API_WORKERS
-import os
-import sys
-import asyncio
-# Add backend to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 app = FastAPI(
     title="PRISM — GitHub Engineering Intelligence Platform",
@@ -19,6 +22,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(
         asyncio.WindowsProactorEventLoopPolicy()
     )
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -28,22 +32,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database
-try:
-    init_db()
-except Exception as e:
-    print(f"Warning: Database initialization issue: {e}")
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database schema on application startup."""
+    try:
+        await init_db()
+        print("[App] Database initialization completed successfully")
+    except Exception as e:
+        print(f"[App Warning] Database initialization issue: {e}")
 
 # Include routes
 app.include_router(router)
 
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok"}
 
 
 @app.get("/")
-def root():
+async def root():
     # Simple test route to verify DB connection on startup
     return {"message": "MySQL Connected Successfully"}
 

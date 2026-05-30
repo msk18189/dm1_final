@@ -14,7 +14,7 @@ All 9 intelligence modules are represented here:
 Support tables:
   contributors, ml_predictions, analytics_snapshots, total_analysis
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column,
     Integer,
@@ -29,6 +29,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from .database import Base
+
+# Helper to generate UTC timestamps
+def utc_now():
+    """Return current time in UTC with timezone info."""
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +73,7 @@ class Repository(Base):
     initial_sync_completed = Column(Boolean, default=False)
     last_synced_at = Column(DateTime, nullable=True, index=True)
     last_successful_sync = Column(DateTime, nullable=True)
-    last_synced = Column(DateTime, default=datetime.utcnow)
+    last_synced = Column(DateTime, default=utc_now)
 
     # Record counts per module (for Repository Status Panel)
     total_prs = Column(Integer, default=0)
@@ -97,8 +102,8 @@ class Repository(Base):
     rate_limit_limit = Column(Integer, nullable=True)
     rate_limit_reset = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     analyses = relationship("TotalAnalysis", back_populates="repository", cascade="all, delete-orphan")
@@ -133,8 +138,8 @@ class TotalAnalysis(Base):
     avg_review_duration = Column(Float, nullable=True)
     avg_wait_for_review = Column(Float, nullable=True)
     stale_pr_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     repository = relationship("Repository", back_populates="analyses")
 
@@ -309,7 +314,7 @@ class Branch(Base):
     # age in days since last commit
     staleness_days = Column(Integer, nullable=True)
 
-    synced_at = Column(DateTime, default=datetime.utcnow)
+    synced_at = Column(DateTime, default=utc_now)
     repository = relationship("Repository", back_populates="branches")
 
     __table_args__ = (
@@ -341,7 +346,7 @@ class Fork(Base):
     # Derived: days since last push
     staleness_days = Column(Integer, nullable=True)
 
-    synced_at = Column(DateTime, default=datetime.utcnow)
+    synced_at = Column(DateTime, default=utc_now)
     repository = relationship("Repository", back_populates="forks")
 
 
@@ -372,7 +377,7 @@ class Discussion(Base):
     created_at = Column(DateTime, nullable=True, index=True)
     updated_at = Column(DateTime, nullable=True)
 
-    synced_at = Column(DateTime, default=datetime.utcnow)
+    synced_at = Column(DateTime, default=utc_now)
     repository = relationship("Repository", back_populates="discussions")
     comments = relationship("DiscussionComment", back_populates="discussion", cascade="all, delete-orphan")
 
@@ -419,7 +424,7 @@ class Project(Base):
     created_at = Column(DateTime, nullable=True, index=True)
     updated_at = Column(DateTime, nullable=True)
 
-    synced_at = Column(DateTime, default=datetime.utcnow)
+    synced_at = Column(DateTime, default=utc_now)
     repository = relationship("Repository", back_populates="projects")
     items = relationship("ProjectItem", back_populates="project", cascade="all, delete-orphan")
 
@@ -457,7 +462,7 @@ class Workflow(Base):
     created_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
 
-    synced_at = Column(DateTime, default=datetime.utcnow)
+    synced_at = Column(DateTime, default=utc_now)
     repository = relationship("Repository", back_populates="workflows")
     runs = relationship("WorkflowRun", back_populates="workflow", cascade="all, delete-orphan")
 
@@ -549,7 +554,7 @@ class MLPrediction(Base):
     bottleneck_probability = Column(Float, nullable=True)
     risk_score = Column(Float, nullable=True)
     predicted_review_wait = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +566,7 @@ class AnalyticsSnapshot(Base):
 
     id = Column(Integer, primary_key=True)
     repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
-    snapshot_date = Column(DateTime, default=datetime.utcnow, index=True)
+    snapshot_date = Column(DateTime, default=utc_now, index=True)
     module = Column(String(100), nullable=False, index=True)  # pull_requests / issues / cicd / etc.
 
     # Snapshot JSON data (stored as text for flexibility)
@@ -593,10 +598,26 @@ class User(Base):
     username = Column(String(255), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     # Relationships
     repositories = relationship("UserRepository", backref="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", backref="user", cascade="all, delete-orphan")
+
+
+# ---------------------------------------------------------------------------
+# SUPPORT — REFRESH TOKEN STORAGE
+# ---------------------------------------------------------------------------
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_value = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    revoked = Column(Boolean, default=False, index=True)  # For token revocation support
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +631,7 @@ class UserRepository(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(50), default="owner")  # owner / viewer
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     __table_args__ = (
         Index("ix_user_repo_unique", "user_id", "repo_id", unique=True),
@@ -637,7 +658,7 @@ class SyncJob(Base):
     retry_count = Column(Integer, default=0)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     # Relationships
     repository = relationship("Repository", backref="sync_jobs")

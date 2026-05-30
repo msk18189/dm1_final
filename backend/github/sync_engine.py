@@ -271,7 +271,7 @@ class SyncEngine:
             summary = self.progress.overall_summary()
 
             self.repo.sync_status = "COMPLETED"
-            self.repo.sync_progress = f"Sync completed in {SyncProgress._fmt_duration(duration)}. {summary}"
+            self.repo.sync_progress = "Sync progress completes"
             self.repo.sync_duration = duration
             self.repo.last_synced_at = datetime.utcnow()
             self.repo.last_successful_sync = datetime.utcnow()
