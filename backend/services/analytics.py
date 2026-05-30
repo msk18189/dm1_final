@@ -1,8 +1,8 @@
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone, date
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select, or_
 from database.models import PullRequest, Contributor, Repository, PRReview, PRCommit
-from sqlalchemy import func
 
 
 def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -36,12 +36,6 @@ def _month_range_from_filters(
     start_date_str: Optional[str] = None,
     end_date_str: Optional[str] = None,
 ) -> List[str]:
-    """Generate chronological list of YYYY-MM keys.
-
-    If start_date_str / end_date_str are provided (ISO date strings), the keys
-    span from the month of start_date to the month of end_date (inclusive).
-    Otherwise, falls back to the last *months* calendar months.
-    """
     if start_date_str and end_date_str:
         try:
             start_dt = datetime.fromisoformat(
@@ -93,136 +87,121 @@ def _week_range(weeks: int) -> List[Tuple[int, int]]:
 
 
 class AnalyticsService:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
     
-    def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
-        """
-        Get the latest activity timestamp for a PR based on:
-        1. Latest review submission
-        2. Latest commit
-        3. PR updated_at
-        4. PR created_at (fallback)
-        
-        This is the true last activity timestamp, not the creation date.
-        """
+    async def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
         timestamps = []
         
         if pr.updated_at:
             timestamps.append(_ensure_utc(pr.updated_at))
         
-        # Get latest review timestamp for this PR
-        latest_review = self.db.query(func.max(PRReview.submitted_at)).filter(
-            PRReview.pr_id == pr.id
-        ).scalar()
+        result = await self.db.execute(select(func.max(PRReview.submitted_at)).where(PRReview.pr_id == pr.id))
+        latest_review = result.scalar()
         if latest_review:
             timestamps.append(_ensure_utc(latest_review))
         
-        # Get latest commit timestamp for this PR
-        latest_commit = self.db.query(func.max(PRCommit.committed_at)).filter(
-            PRCommit.pr_id == pr.id
-        ).scalar()
+        result = await self.db.execute(select(func.max(PRCommit.committed_at)).where(PRCommit.pr_id == pr.id))
+        latest_commit = result.scalar()
         if latest_commit:
             timestamps.append(_ensure_utc(latest_commit))
         
-        # If no other activity, use created_at
         if pr.created_at:
             timestamps.append(_ensure_utc(pr.created_at))
         
         return max(timestamps) if timestamps else None
 
-    def _get_inactivity_days(self, pr: PullRequest) -> int:
-        """Calculate days since last activity on a PR."""
-        latest_activity = self._get_latest_activity_timestamp(pr)
+    async def _get_inactivity_days(self, pr: PullRequest) -> int:
+        latest_activity = await self._get_latest_activity_timestamp(pr)
         if not latest_activity:
             return 0
         now = _ensure_utc(datetime.utcnow())
         return (now - latest_activity).days
     
-    def get_open_pr_count(self, repo_id: int) -> int:
-        return self.db.query(PullRequest).filter(
+    async def get_open_pr_count(self, repo_id: int) -> int:
+        result = await self.db.execute(select(func.count(PullRequest.id)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "OPEN"
-        ).count()
+        ))
+        return result.scalar() or 0
     
-    def get_stale_pr_count(self, repo_id: int, days: int = 30) -> int:
-        """
-        Count stale PRs based on inactivity duration (not created_at).
-        
-        A PR is stale when:
-        - State = OPEN
-        - Inactive for >= days parameter (default 30)
-        - Where "inactive" = time since last activity (commit, review, update)
-        """
-        open_prs = self.db.query(PullRequest).filter(
+    async def get_stale_pr_count(self, repo_id: int, days: int = 30) -> int:
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "OPEN",
-        ).all()
+        ))
+        open_prs = result.scalars().all()
         
         stale_count = 0
         for pr in open_prs:
-            inactivity_days = self._get_inactivity_days(pr)
+            inactivity_days = await self._get_inactivity_days(pr)
             if inactivity_days >= days:
                 stale_count += 1
         
         return stale_count
     
-    def get_avg_cycle_time(self, repo_id: int) -> Optional[float]:
-        result = self.db.query(func.avg(PullRequest.cycle_time_days)).filter(
+    async def get_avg_cycle_time(self, repo_id: int) -> Optional[float]:
+        result = await self.db.execute(select(func.avg(PullRequest.cycle_time_days)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.cycle_time_days.isnot(None)
-        ).scalar()
-        return round(float(result), 2) if result is not None else None
+        ))
+        val = result.scalar()
+        return round(float(val), 2) if val is not None else None
     
-    def get_median_cycle_time(self, repo_id: int) -> Optional[float]:
-        prs = self.db.query(PullRequest.cycle_time_days).filter(
+    async def get_median_cycle_time(self, repo_id: int) -> Optional[float]:
+        result = await self.db.execute(select(PullRequest.cycle_time_days).where(
             PullRequest.repo_id == repo_id,
             PullRequest.cycle_time_days.isnot(None)
-        ).all()
+        ))
+        prs = result.scalars().all()
         
         if not prs:
             return None
         
-        values = sorted([p[0] for p in prs])
+        values = sorted(prs)
         n = len(values)
         return values[n // 2] if n % 2 == 1 else (values[n // 2 - 1] + values[n // 2]) / 2
     
-    def get_merge_rate(self, repo_id: int) -> float:
-        merged = self.db.query(PullRequest).filter(
+    async def get_merge_rate(self, repo_id: int) -> float:
+        result = await self.db.execute(select(func.count(PullRequest.id)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "MERGED"
-        ).count()
+        ))
+        merged = result.scalar() or 0
         
-        closed = self.db.query(PullRequest).filter(
+        result = await self.db.execute(select(func.count(PullRequest.id)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state.in_(["MERGED", "CLOSED"])
-        ).count()
+        ))
+        closed = result.scalar() or 0
         
         return round((merged / closed * 100) if closed > 0 else 0, 2)
     
-    def get_avg_review_duration(self, repo_id: int) -> Optional[float]:
-        result = self.db.query(func.avg(PullRequest.review_duration_hours)).filter(
+    async def get_avg_review_duration(self, repo_id: int) -> Optional[float]:
+        result = await self.db.execute(select(func.avg(PullRequest.review_duration_hours)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.review_duration_hours.isnot(None)
-        ).scalar()
-        return round(float(result) / 24, 2) if result is not None else None
+        ))
+        val = result.scalar()
+        return round(float(val) / 24, 2) if val is not None else None
     
-    def get_avg_wait_for_review(self, repo_id: int) -> Optional[float]:
-        result = self.db.query(func.avg(PullRequest.wait_for_review_hours)).filter(
+    async def get_avg_wait_for_review(self, repo_id: int) -> Optional[float]:
+        result = await self.db.execute(select(func.avg(PullRequest.wait_for_review_hours)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.wait_for_review_hours.isnot(None)
-        ).scalar()
-        return round(float(result) / 24, 2) if result is not None else None
+        ))
+        val = result.scalar()
+        return round(float(val) / 24, 2) if val is not None else None
     
-    def get_pr_throughput(self, repo_id: int, weeks: int = 8) -> List[Dict[str, Any]]:
-        """PRs merged per ISO week (chronological, zero-filled)."""
+    async def get_pr_throughput(self, repo_id: int, weeks: int = 8) -> List[Dict[str, Any]]:
         week_keys = _week_range(weeks)
         counts = {k: 0 for k in week_keys}
 
-        prs = self.db.query(PullRequest).filter(
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
             PullRequest.merged_at.isnot(None),
-        ).all()
+        ))
+        prs = result.scalars().all()
 
         for pr in prs:
             key = _iso_week_key(pr.merged_at)
@@ -234,40 +213,33 @@ class AnalyticsService:
             for y, w in week_keys
         ]
 
-    def get_monthly_pr_flow(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
-        """Created / merged / closed counts by the month each event occurred.
-
-        Merged PRs are counted ONLY under 'merged', never under 'closed'.
-        Closed PRs are those whose state is CLOSED (merged_at is None).
-        """
+    async def get_monthly_pr_flow(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
         month_keys = _month_range(months)
-        first_month = month_keys[0]  # e.g. "2025-12"
-        last_month = month_keys[-1]  # e.g. "2026-05"
+        first_month = month_keys[0]
+        last_month = month_keys[-1]
 
-        # Compute datetime bounds for the DB query
         first_y, first_m = int(first_month[:4]), int(first_month[5:])
         last_y, last_m = int(last_month[:4]), int(last_month[5:])
         range_start = datetime(first_y, first_m, 1, tzinfo=timezone.utc)
-        # First day of the month after last_month
         if last_m == 12:
             range_end = datetime(last_y + 1, 1, 1, tzinfo=timezone.utc)
         else:
             range_end = datetime(last_y, last_m + 1, 1, tzinfo=timezone.utc)
 
-        from sqlalchemy import or_
-        prs = self.db.query(
+        result = await self.db.execute(select(
             PullRequest.created_at,
             PullRequest.merged_at,
             PullRequest.closed_at,
             PullRequest.state,
-        ).filter(
+        ).where(
             PullRequest.repo_id == repo_id,
             or_(
                 PullRequest.created_at.between(range_start, range_end),
                 PullRequest.merged_at.between(range_start, range_end),
                 PullRequest.closed_at.between(range_start, range_end),
             )
-        ).all()
+        ))
+        prs = result.all()
 
         flow = {
             ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0}
@@ -285,30 +257,20 @@ class AnalyticsService:
                 if m in flow:
                     flow[m]["merged"] += 1
             elif state and state.upper() == "CLOSED" and closed_at:
-                # Only count as closed if NOT merged (merged_at is None)
                 m = _month_key(closed_at)
                 if m in flow:
                     flow[m]["closed"] += 1
 
-        result = [flow[ym] for ym in month_keys]
+        result_flow = [flow[ym] for ym in month_keys]
 
-        created_total = sum(r["created"] for r in result)
-        merged_total = sum(r["merged"] for r in result)
-        closed_total = sum(r["closed"] for r in result)
-
-        print(f"[Telemetry][MonthlyFlow] monthly grouped counts: {len(result)}")
-        print(f"[Telemetry][MonthlyFlow] created totals: {created_total}")
-        print(f"[Telemetry][MonthlyFlow] merged totals: {merged_total}")
-        print(f"[Telemetry][MonthlyFlow] closed totals: {closed_total}")
-        print(f"[Telemetry][MonthlyFlow] API payload: {result}")
-
-        return result
+        return result_flow
     
-    def get_oldest_open_prs(self, repo_id: int, limit: int = 10) -> List[Dict]:
-        prs = self.db.query(PullRequest).filter(
+    async def get_oldest_open_prs(self, repo_id: int, limit: int = 10) -> List[Dict]:
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "OPEN"
-        ).order_by(PullRequest.created_at.asc()).limit(limit).all()
+        ).order_by(PullRequest.created_at.asc()).limit(limit))
+        prs = result.scalars().all()
         
         return [
             {
@@ -322,12 +284,13 @@ class AnalyticsService:
             for pr in prs
         ]
     
-    def get_slowest_merged_prs(self, repo_id: int, limit: int = 10) -> List[Dict]:
-        prs = self.db.query(PullRequest).filter(
+    async def get_slowest_merged_prs(self, repo_id: int, limit: int = 10) -> List[Dict]:
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "MERGED",
             PullRequest.cycle_time_days.isnot(None)
-        ).order_by(PullRequest.cycle_time_days.desc()).limit(limit).all()
+        ).order_by(PullRequest.cycle_time_days.desc()).limit(limit))
+        prs = result.scalars().all()
         
         return [
             {
@@ -342,11 +305,11 @@ class AnalyticsService:
             for pr in prs
         ]
     
-    def get_contributor_activity(self, repo_id: int, limit: int = 15) -> List[Dict]:
-        """Aggregate contributor stats from pull requests (source of truth)."""
-        prs = self.db.query(PullRequest).filter(
+    async def get_contributor_activity(self, repo_id: int, limit: int = 15) -> List[Dict]:
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
-        ).all()
+        ))
+        prs = result.scalars().all()
 
         now = _ensure_utc(datetime.utcnow())
         stats: Dict[str, Dict[str, Any]] = {}
@@ -383,10 +346,10 @@ class AnalyticsService:
             if pr.wait_for_review_hours is not None and pr.wait_for_review_hours >= 0:
                 entry["wait_hours"].append(pr.wait_for_review_hours)
 
-        result = []
+        result_list = []
         for entry in stats.values():
             total = entry["total_prs"]
-            result.append({
+            result_list.append({
                 "username": entry["username"],
                 "total_prs": total,
                 "merged_prs": entry["merged_prs"],
@@ -401,30 +364,29 @@ class AnalyticsService:
                 "stale_pr_count": entry["stale_pr_count"],
             })
 
-        result.sort(key=lambda x: x["total_prs"], reverse=True)
-        return result[:limit]
+        result_list.sort(key=lambda x: x["total_prs"], reverse=True)
+        return result_list[:limit]
     
-    def get_median_cycle_time_rounded(self, repo_id: int) -> Optional[float]:
-        """Get median cycle time rounded to 1 decimal"""
-        median = self.get_median_cycle_time(repo_id)
+    async def get_median_cycle_time_rounded(self, repo_id: int) -> Optional[float]:
+        median = await self.get_median_cycle_time(repo_id)
         return round(median, 1) if median is not None else None
     
-    def get_avg_reviews_per_pr(self, repo_id: int) -> float:
-        """Average number of reviews per PR"""
-        result = self.db.query(func.avg(PullRequest.review_count)).filter(
+    async def get_avg_reviews_per_pr(self, repo_id: int) -> float:
+        result = await self.db.execute(select(func.avg(PullRequest.review_count)).where(
             PullRequest.repo_id == repo_id,
             PullRequest.review_count.isnot(None)
-        ).scalar()
-        return round(float(result or 0), 1)
+        ))
+        val = result.scalar()
+        return round(float(val or 0), 1)
     
-    def get_kpi_summary(self, repo_id: int) -> Dict[str, Any]:
+    async def get_kpi_summary(self, repo_id: int) -> Dict[str, Any]:
         return {
-            "open_prs": self.get_open_pr_count(repo_id),
-            "stale_prs": self.get_stale_pr_count(repo_id),
-            "avg_cycle_time": self.get_avg_cycle_time(repo_id),
-            "median_cycle_time": self.get_median_cycle_time_rounded(repo_id),
-            "avg_wait_for_review": self.get_avg_wait_for_review(repo_id),
-            "avg_review_duration": self.get_avg_review_duration(repo_id),
-            "merge_rate": self.get_merge_rate(repo_id),
-            "avg_reviews_per_pr": self.get_avg_reviews_per_pr(repo_id),
+            "open_prs": await self.get_open_pr_count(repo_id),
+            "stale_prs": await self.get_stale_pr_count(repo_id),
+            "avg_cycle_time": await self.get_avg_cycle_time(repo_id),
+            "median_cycle_time": await self.get_median_cycle_time_rounded(repo_id),
+            "avg_wait_for_review": await self.get_avg_wait_for_review(repo_id),
+            "avg_review_duration": await self.get_avg_review_duration(repo_id),
+            "merge_rate": await self.get_merge_rate(repo_id),
+            "avg_reviews_per_pr": await self.get_avg_reviews_per_pr(repo_id),
         }

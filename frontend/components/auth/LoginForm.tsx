@@ -8,12 +8,13 @@ import { saveAuthToken } from '@/lib/auth'
 import Input from '../ui/Input'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
-import { AlertCircle, Lock, Mail } from 'lucide-react'
+import { AlertCircle, Lock, Mail, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginForm() {
   const router = useRouter()
   const [ident, setIdent] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -87,15 +88,23 @@ export default function LoginForm() {
         <div className="relative">
           <Input
             label="Password"
-            type="password"
+            type={showPassword ? "text" : "password"}
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
             required
-            className="pl-10"
+            className="pl-10 pr-10"
           />
           <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3.5 top-[38px] text-muted hover:text-primary transition-colors flex items-center justify-center cursor-pointer"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
         </div>
 
         <Button type="submit" loading={loading} className="w-full mt-6">

@@ -1,9 +1,9 @@
 import csv
 import io
-from datetime import datetime, timezone,timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from sqlalchemy import func, case, and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import func, case, and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import MLPrediction, PullRequest, Repository, PRReview, PRCommit
 from services.filters import (
@@ -29,61 +29,39 @@ def _filters_from_params(
 
 
 class ExtendedAnalytics:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.base = AnalyticsService(db)
 
-    def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
-        """
-        Get the latest activity timestamp for a PR based on:
-        1. Latest review submission
-        2. Latest commit
-        3. PR updated_at
-        4. PR created_at (fallback)
-        
-        This is the true last activity timestamp, not the creation date.
-        """
+    async def _get_latest_activity_timestamp(self, pr: PullRequest) -> Optional[datetime]:
         timestamps = []
         
         if pr.updated_at:
             timestamps.append(ensure_utc(pr.updated_at))
         
-        # Get latest review timestamp for this PR
-        latest_review = self.db.query(func.max(PRReview.submitted_at)).filter(
-            PRReview.pr_id == pr.id
-        ).scalar()
+        result = await self.db.execute(select(func.max(PRReview.submitted_at)).where(PRReview.pr_id == pr.id))
+        latest_review = result.scalar()
         if latest_review:
             timestamps.append(ensure_utc(latest_review))
         
-        # Get latest commit timestamp for this PR
-        latest_commit = self.db.query(func.max(PRCommit.committed_at)).filter(
-            PRCommit.pr_id == pr.id
-        ).scalar()
+        result = await self.db.execute(select(func.max(PRCommit.committed_at)).where(PRCommit.pr_id == pr.id))
+        latest_commit = result.scalar()
         if latest_commit:
             timestamps.append(ensure_utc(latest_commit))
         
-        # If no other activity, use created_at
         if pr.created_at:
             timestamps.append(ensure_utc(pr.created_at))
         
         return max(timestamps) if timestamps else None
 
-    def _get_inactivity_days(self, pr: PullRequest) -> int:
-        """Calculate days since last activity on a PR."""
-        latest_activity = self._get_latest_activity_timestamp(pr)
+    async def _get_inactivity_days(self, pr: PullRequest) -> int:
+        latest_activity = await self._get_latest_activity_timestamp(pr)
         if not latest_activity:
             return 0
         now = ensure_utc(datetime.utcnow())
         return (now - latest_activity).days
 
     def _get_stale_severity(self, inactivity_days: int) -> str:
-        """
-        Classify PR inactivity into operational tiers:
-        - healthy: 0-7 days inactive
-        - warning: 7-30 days inactive
-        - stale: 30-60 days inactive
-        - critical: 60+ days inactive
-        """
         if inactivity_days < 7:
             return "healthy"
         elif inactivity_days < 30:
@@ -93,7 +71,7 @@ class ExtendedAnalytics:
         else:
             return "critical"
 
-    def get_kpi_with_duration(
+    async def get_kpi_with_duration(
         self,
         repo_id: int,
         days: Optional[int] = None,
@@ -103,50 +81,61 @@ class ExtendedAnalytics:
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         filters = _filters_from_params(days, author, state, start_date, end_date)
-        query = get_filtered_prs_query(self.db, repo_id, filters)
+        query = get_filtered_prs_query(repo_id, filters)
         
-        # Build subquery for aggregations
         subq = query.subquery()
         
-        # 1. counts
-        total_count = self.db.query(func.count(subq.c.id)).scalar() or 0
-        open_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "OPEN").scalar() or 0
+        result = await self.db.execute(select(func.count(subq.c.id)))
+        total_count = result.scalar() or 0
         
-        open_prs = query.filter(PullRequest.state == "OPEN").all()
+        result = await self.db.execute(select(func.count(subq.c.id)).where(subq.c.state == "OPEN"))
+        open_count = result.scalar() or 0
+        
+        result = await self.db.execute(query.where(PullRequest.state == "OPEN"))
+        open_prs = result.scalars().all()
+        
         stale_count = 0
         for pr in open_prs:
-            inactivity_days = self._get_inactivity_days(pr)
+            inactivity_days = await self._get_inactivity_days(pr)
             if inactivity_days >= 30:
                 stale_count += 1
         
-        merged_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "MERGED").scalar() or 0
-        closed_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state.in_(["MERGED", "CLOSED"])).scalar() or 0
+        result = await self.db.execute(select(func.count(subq.c.id)).where(subq.c.state == "MERGED"))
+        merged_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count(subq.c.id)).where(subq.c.state.in_(["MERGED", "CLOSED"])))
+        closed_count = result.scalar() or 0
 
-        # 2. averages
-        avg_cycle_days_result = self.db.query(func.avg(subq.c.cycle_time_days)).filter(subq.c.state == "MERGED").scalar()
+        result = await self.db.execute(select(func.avg(subq.c.cycle_time_days)).where(subq.c.state == "MERGED"))
+        avg_cycle_days_result = result.scalar()
         avg_cycle = float(avg_cycle_days_result) * 24 if avg_cycle_days_result is not None else None
 
-        # For median cycle time:
-        cycle_times = [float(r[0]) for r in self.db.query(subq.c.cycle_time_days).filter(subq.c.state == "MERGED", subq.c.cycle_time_days.isnot(None)).order_by(subq.c.cycle_time_days).all()]
+        result = await self.db.execute(select(subq.c.cycle_time_days).where(subq.c.state == "MERGED", subq.c.cycle_time_days.isnot(None)).order_by(subq.c.cycle_time_days))
+        cycle_times = [float(r) for r in result.scalars().all()]
         if cycle_times:
             n = len(cycle_times)
             median_cycle = (cycle_times[n // 2] if n % 2 == 1 else (cycle_times[n // 2 - 1] + cycle_times[n // 2]) / 2) * 24
         else:
             median_cycle = None
 
-        avg_wait_result = self.db.query(func.avg(subq.c.wait_for_review_hours)).filter(subq.c.wait_for_review_hours.isnot(None), subq.c.wait_for_review_hours >= 0).scalar()
+        result = await self.db.execute(select(func.avg(subq.c.wait_for_review_hours)).where(subq.c.wait_for_review_hours.isnot(None), subq.c.wait_for_review_hours >= 0))
+        avg_wait_result = result.scalar()
         avg_wait = float(avg_wait_result) if avg_wait_result is not None else None
         
-        avg_review_result = self.db.query(func.avg(subq.c.review_duration_hours)).filter(subq.c.review_duration_hours.isnot(None), subq.c.review_duration_hours >= 0).scalar()
+        result = await self.db.execute(select(func.avg(subq.c.review_duration_hours)).where(subq.c.review_duration_hours.isnot(None), subq.c.review_duration_hours >= 0))
+        avg_review_result = result.scalar()
         avg_review = float(avg_review_result) if avg_review_result is not None else None
 
         merge_rate = round((merged_count / closed_count * 100) if closed_count else 0, 2)
-        avg_reviews = float(self.db.query(func.avg(subq.c.review_count)).scalar() or 0.0)
+        
+        result = await self.db.execute(select(func.avg(subq.c.review_count)))
+        avg_reviews = float(result.scalar() or 0.0)
 
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
 
-        # closed_not_merged_prs = PRs with state CLOSED (not merged)
-        closed_not_merged_count = self.db.query(func.count(subq.c.id)).filter(subq.c.state == "CLOSED").scalar() or 0
+        result = await self.db.execute(select(func.count(subq.c.id)).where(subq.c.state == "CLOSED"))
+        closed_not_merged_count = result.scalar() or 0
 
         return {
             "total_prs": total_count,
@@ -174,25 +163,24 @@ class ExtendedAnalytics:
             "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
-
-    def get_monthly_flow_filtered(
+    async def get_monthly_flow_filtered(
         self, repo_id: int, months: int = 6, **filter_kw
     ) -> List[Dict[str, Any]]:
         filters = _filters_from_params(**filter_kw)
-        query = get_filtered_prs_query(self.db, repo_id, filters)
+        query = get_filtered_prs_query(repo_id, filters)
         month_keys = _month_range(months)
         flow = {
             ym: {"month": _format_month_label(ym), "created": 0, "merged": 0, "closed": 0, "open_at_end": 0}
             for ym in month_keys
         }
         
-        # Select only required columns to avoid full ORM object overhead
-        rows = query.with_entities(
+        result = await self.db.execute(query.with_only_columns(
             PullRequest.created_at,
             PullRequest.merged_at,
             PullRequest.closed_at,
             PullRequest.state
-        ).all()
+        ))
+        rows = result.all()
         
         for created_at, merged_at, closed_at, state in rows:
             if created_at:
@@ -208,7 +196,6 @@ class ExtendedAnalytics:
                 if m in flow:
                     flow[m]["closed"] += 1
                     
-        # Calculate open_at_end for each month in month_keys
         for ym in month_keys:
             y, m_ = map(int, ym.split("-"))
             if m_ == 12:
@@ -235,17 +222,17 @@ class ExtendedAnalytics:
             
         return [flow[ym] for ym in month_keys]
 
-    def get_throughput_filtered(
+    async def get_throughput_filtered(
         self, repo_id: int, weeks: int = 8, **filter_kw
     ) -> List[Dict[str, Any]]:
         filters = _filters_from_params(**filter_kw)
-        query = get_filtered_prs_query(self.db, repo_id, filters)
+        query = get_filtered_prs_query(repo_id, filters)
         week_keys = _week_range(weeks)
         counts = {k: 0 for k in week_keys}
         
-        # Select only merged_at to avoid full ORM overhead
-        rows = query.filter(PullRequest.state == "MERGED", PullRequest.merged_at.isnot(None))\
-            .with_entities(PullRequest.merged_at).all()
+        result = await self.db.execute(query.where(PullRequest.state == "MERGED", PullRequest.merged_at.isnot(None))\
+            .with_only_columns(PullRequest.merged_at))
+        rows = result.all()
             
         for (merged_at,) in rows:
             key = _iso_week_key(merged_at)
@@ -253,14 +240,13 @@ class ExtendedAnalytics:
                 counts[key] += 1
         return [{"week": _week_label(y, w), "prs": counts[(y, w)]} for y, w in week_keys]
 
-    def get_contributors_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
+    async def get_contributors_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
-
-        # We start from the filtered query
-        query = get_filtered_prs_query(self.db, repo_id, filters)
-        all_prs = query.all()
+        query = get_filtered_prs_query(repo_id, filters)
         
-        # Group PRs by author and calculate stats
+        result = await self.db.execute(query)
+        all_prs = result.scalars().all()
+        
         author_stats: Dict[str, Dict[str, Any]] = {}
         
         for pr in all_prs:
@@ -286,15 +272,13 @@ class ExtendedAnalytics:
                     author_stats[author]["cycle_times"].append(pr.cycle_time_days)
             elif pr.state == "OPEN":
                 author_stats[author]["open_prs"] += 1
-                # Calculate stale status based on inactivity (not created_at)
-                inactivity_days = self._get_inactivity_days(pr)
+                inactivity_days = await self._get_inactivity_days(pr)
                 if inactivity_days >= 30:
                     author_stats[author]["stale_prs"] += 1
             
             if pr.wait_for_review_hours is not None and pr.wait_for_review_hours >= 0:
                 author_stats[author]["wait_times"].append(pr.wait_for_review_hours)
         
-        # Calculate averages and format
         formatted_results = []
         for author, stats in author_stats.items():
             total_prs = stats["total_prs"]
@@ -302,11 +286,9 @@ class ExtendedAnalytics:
             open_prs = stats["open_prs"]
             stale_prs = stats["stale_prs"]
             
-            # Average cycle time (in days)
             avg_cycle_days = (sum(stats["cycle_times"]) / len(stats["cycle_times"])) if stats["cycle_times"] else None
             avg_cycle_h = avg_cycle_days * 24 if avg_cycle_days is not None else None
             
-            # Average wait time (in hours)
             avg_wait_h = (sum(stats["wait_times"]) / len(stats["wait_times"])) if stats["wait_times"] else None
             
             formatted_results.append({
@@ -321,13 +303,8 @@ class ExtendedAnalytics:
                 "merge_rate": round((merged_prs / total_prs * 100) if total_prs else 0, 2),
             })
         
-        # Sort by total PRs (most productive contributors first)
         formatted_results.sort(key=lambda x: x["total_prs"], reverse=True)
-        
-        # Get total number of unique authors
         total_contributors = len(author_stats)
-        
-        # Paginate
         offset = (page - 1) * limit
         paginated_results = formatted_results[offset:offset+limit]
             
@@ -339,17 +316,19 @@ class ExtendedAnalytics:
             "pages": (total_contributors + limit - 1) // limit if limit else 1
         }
 
-    def get_oldest_open_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
+    async def get_oldest_open_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
         filters.state = "OPEN"
-        query = get_filtered_prs_query(self.db, repo_id, filters)
+        query = get_filtered_prs_query(repo_id, filters)
         
-        # Order by created_at ascending
         query = query.order_by(PullRequest.created_at.asc())
         
-        total = query.count()
+        result_count = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result_count.scalar() or 0
+        
         offset = (page - 1) * limit
-        prs = query.offset(offset).limit(limit).all()
+        result = await self.db.execute(query.offset(offset).limit(limit))
+        prs = result.scalars().all()
         
         now = ensure_utc(datetime.utcnow())
         data = [
@@ -371,18 +350,20 @@ class ExtendedAnalytics:
             "pages": (total + limit - 1) // limit if limit else 1
         }
 
-    def get_slowest_merged_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
+    async def get_slowest_merged_filtered(self, repo_id: int, page: int = 1, limit: int = 10, **filter_kw) -> Dict[str, Any]:
         filters = _filters_from_params(**filter_kw)
         filters.state = "MERGED"
-        query = get_filtered_prs_query(self.db, repo_id, filters)
+        query = get_filtered_prs_query(repo_id, filters)
         
-        # Order by cycle_time_days descending
-        query = query.filter(PullRequest.cycle_time_days.isnot(None))\
+        query = query.where(PullRequest.cycle_time_days.isnot(None))\
             .order_by(PullRequest.cycle_time_days.desc())
             
-        total = query.count()
+        result_count = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result_count.scalar() or 0
+        
         offset = (page - 1) * limit
-        prs = query.offset(offset).limit(limit).all()
+        result = await self.db.execute(query.offset(offset).limit(limit))
+        prs = result.scalars().all()
         
         data = [
             {
@@ -405,19 +386,19 @@ class ExtendedAnalytics:
             "pages": (total + limit - 1) // limit if limit else 1
         }
 
-    def get_authors(self, repo_id: int) -> List[str]:
-        return list_authors(self.db, repo_id)
+    async def get_authors(self, repo_id: int) -> List[str]:
+        return await list_authors(self.db, repo_id)
 
-    def get_pr_risk_panel(self, repo_id: int, page: int = 1, limit: int = 15) -> Dict[str, Any]:
-        open_prs_query = self.db.query(PullRequest)\
-            .filter(PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
+    async def get_pr_risk_panel(self, repo_id: int, page: int = 1, limit: int = 15) -> Dict[str, Any]:
+        open_prs_query = select(PullRequest)\
+            .where(PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
             
-        total = open_prs_query.count()
+        result_count = await self.db.execute(select(func.count()).select_from(open_prs_query.subquery()))
+        total = result_count.scalar() or 0
         
-
-        query = self.db.query(PullRequest, MLPrediction)\
+        query = select(PullRequest, MLPrediction)\
             .outerjoin(MLPrediction, PullRequest.id == MLPrediction.pr_id)\
-            .filter(
+            .where(
                 PullRequest.repo_id == repo_id,
                 PullRequest.state == "OPEN"
             )\
@@ -430,7 +411,8 @@ class ExtendedAnalytics:
                 PullRequest.created_at.asc()
             )
         offset = (page - 1) * limit
-        results = query.offset(offset).limit(limit).all()
+        result = await self.db.execute(query.offset(offset).limit(limit))
+        results = result.all()
         
         data = []
         for pr, pred in results:
@@ -450,25 +432,20 @@ class ExtendedAnalytics:
                     else None
                 )
             else:
-                # Calculate age in days
                 now = ensure_utc(datetime.utcnow())
                 pr_created = ensure_utc(pr.created_at) if pr.created_at else now
                 age_days = (now - pr_created).days
 
                 score_source = "heuristic"
                 
-                # Heuristic Risk Score (0-100)
-                # Size component (max 40)
                 files_cnt = pr.files_changed or 0
                 lines_added = pr.lines_added or 0
                 lines_deleted = pr.lines_deleted or 0
                 total_lines = lines_added + lines_deleted
                 size_risk = min(40, (files_cnt * 2) + int(total_lines * 0.04))
                 
-                # Age component (max 30)
                 age_risk = min(30, age_days * 1.5)
                 
-                # Discussion/Review activity component (max 30)
                 comment_cnt = pr.comment_count or 0
                 rev_cnt = pr.review_count or 0
                 activity_risk = 0
@@ -480,7 +457,6 @@ class ExtendedAnalytics:
                 
                 risk_score = float(size_risk + age_risk + activity_risk)
                 
-                # Heuristic Bottleneck Probability (0-100)
                 base_bottleneck = 0
                 if rev_cnt == 0:
                     if age_days > 14:
@@ -504,11 +480,9 @@ class ExtendedAnalytics:
                 size_factor = min(30.0, files_cnt * 1.5)
                 bottleneck_probability = round(min(100.0, base_bottleneck + size_factor), 1)
                 
-                # Heuristic Delay Days
                 predicted_delay_days = max(1.0, float(files_cnt * 0.2 + total_lines * 0.005 + age_days * 0.1))
                 predicted_delay_display = format_duration(predicted_delay_days * 24)
                 
-                # Heuristic Review Wait Hours
                 if rev_cnt == 0:
                     predicted_review_wait_hours = float(max(24.0, age_days * 24.0))
                 else:
@@ -536,43 +510,25 @@ class ExtendedAnalytics:
             "pages": (total + limit - 1) // limit if limit else 1
         }
 
-    def get_stale_recommendations(self, repo_id: int, page: int = 1, limit: int = 10, stale_days: int = 30) -> Dict[str, Any]:
-        """
-        Detect stale PRs based on inactivity duration.
-        
-        A PR is STALE when:
-        - State = OPEN (excluding merged/closed/draft)
-        - No activity for X days (default 30)
-        - Where "activity" = max(updated_at, latest_commit, latest_review)
-        
-        Returns PRs with operational severity tiers:
-        - healthy: 0-7 days inactive
-        - warning: 7-30 days inactive
-        - stale: 30-60 days inactive
-        - critical: 60+ days inactive
-        """
+    async def get_stale_recommendations(self, repo_id: int, page: int = 1, limit: int = 10, stale_days: int = 30) -> Dict[str, Any]:
         now = ensure_utc(datetime.utcnow())
         
-        # Get all OPEN, non-draft PRs for this repo
-        open_prs = self.db.query(PullRequest).filter(
+        result = await self.db.execute(select(PullRequest).where(
             PullRequest.repo_id == repo_id,
             PullRequest.state == "OPEN",
             PullRequest.draft == False
-        ).all()
+        ))
+        open_prs = result.scalars().all()
         
         stale_alerts = []
         
         for pr in open_prs:
-            # Calculate true inactivity (days since last activity)
-            inactivity_days = self._get_inactivity_days(pr)
+            inactivity_days = await self._get_inactivity_days(pr)
             severity = self._get_stale_severity(inactivity_days)
             
-            # Only include PRs that are at least in "warning" state (7+ days inactive)
-            # This filters out healthy PRs and focuses on those needing attention
             if severity not in ["warning", "stale", "critical"]:
                 continue
             
-            # Build operational reasons based on inactivity
             reasons: List[str] = []
             actions: List[str] = []
             
@@ -588,7 +544,6 @@ class ExtendedAnalytics:
                 reasons.append(f"No activity for {inactivity_days} days (WARNING)")
                 actions.append("Monitor progress and request review if needed")
             
-            # Add operational intelligence
             if pr.review_count == 0:
                 reasons.append("No reviews received yet")
                 actions.append("Assign reviewer or request feedback")
@@ -600,7 +555,6 @@ class ExtendedAnalytics:
                 reasons.append(f"Large changeset ({pr.files_changed} files) may be complex")
                 actions.append("Consider breaking into smaller PRs for faster review")
             
-            # Ensure we have reasons and actions
             if not reasons:
                 reasons.append(f"Inactive for {inactivity_days} days")
                 actions.append("Review PR status and current relevance")
@@ -609,22 +563,20 @@ class ExtendedAnalytics:
                 "number": pr.pr_number,
                 "title": pr.title,
                 "author": pr.author,
-                "age_days": inactivity_days,  # True inactivity days
+                "age_days": inactivity_days,
                 "severity": severity,
                 "reasons": reasons,
                 "recommended_actions": actions,
             })
         
-        # Sort by severity (critical > stale > warning) then by inactivity age
         severity_order = {"critical": 0, "stale": 1, "warning": 2}
         stale_alerts.sort(
             key=lambda x: (
                 severity_order.get(x["severity"], 3),
-                -x["age_days"]  # Oldest first within same severity
+                -x["age_days"]
             )
         )
         
-        # Paginate results
         offset = (page - 1) * limit
         paginated_alerts = stale_alerts[offset:offset+limit]
         
@@ -636,14 +588,18 @@ class ExtendedAnalytics:
             "pages": (len(stale_alerts) + limit - 1) // limit if limit else 1
         }
 
-    def compare_repos(self, repo_id_a: int, repo_id_b: int) -> Dict[str, Any]:
-        repo_a = self.db.query(Repository).filter(Repository.id == repo_id_a).first()
-        repo_b = self.db.query(Repository).filter(Repository.id == repo_id_b).first()
+    async def compare_repos(self, repo_id_a: int, repo_id_b: int) -> Dict[str, Any]:
+        result_a = await self.db.execute(select(Repository).where(Repository.id == repo_id_a))
+        repo_a = result_a.scalar_one_or_none()
+        
+        result_b = await self.db.execute(select(Repository).where(Repository.id == repo_id_b))
+        repo_b = result_b.scalar_one_or_none()
+        
         if not repo_a or not repo_b:
             raise ValueError("One or both repositories not found")
 
-        kpi_a = self.get_kpi_with_duration(repo_id_a)
-        kpi_b = self.get_kpi_with_duration(repo_id_b)
+        kpi_a = await self.get_kpi_with_duration(repo_id_a)
+        kpi_b = await self.get_kpi_with_duration(repo_id_b)
 
         def delta(key: str) -> Optional[float]:
             a, b = kpi_a.get(key), kpi_b.get(key)
@@ -672,7 +628,7 @@ class ExtendedAnalytics:
             },
         }
 
-    def build_export_csv(
+    async def build_export_csv(
         self,
         repo_id: int,
         days: Optional[int] = None,
@@ -681,15 +637,20 @@ class ExtendedAnalytics:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> str:
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
         if not repo:
             raise ValueError("Repository not found")
 
-        kpi = self.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
-        contributors = self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state, start_date=start_date, end_date=end_date)["data"]
-        oldest = self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state, start_date=start_date, end_date=end_date)["data"]
-        stale = self.get_stale_recommendations(repo_id)["data"]
-        risks = self.get_pr_risk_panel(repo_id, limit=20)["data"]
+        kpi = await self.get_kpi_with_duration(repo_id, days, author, state, start_date, end_date)
+        contributors_res = await self.get_contributors_filtered(repo_id, limit=50, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
+        contributors = contributors_res["data"]
+        oldest_res = await self.get_oldest_open_filtered(repo_id, limit=20, days=days, author=author, state=state, start_date=start_date, end_date=end_date)
+        oldest = oldest_res["data"]
+        stale_res = await self.get_stale_recommendations(repo_id)
+        stale = stale_res["data"]
+        risks_res = await self.get_pr_risk_panel(repo_id, limit=20)
+        risks = risks_res["data"]
 
         buf = io.StringIO()
         w = csv.writer(buf)

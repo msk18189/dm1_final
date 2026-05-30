@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy.orm import Session, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from database.models import PullRequest
 
@@ -25,23 +26,23 @@ class PRFilterParams:
 
 
 def get_filtered_prs_query(
-    db: Session,
     repo_id: int,
     filters: Optional[PRFilterParams] = None,
-) -> Query:
+):
+    """Build a select statement for filtered PRs (without executing it)."""
     filters = filters or PRFilterParams()
-    query: Query = db.query(PullRequest).filter(PullRequest.repo_id == repo_id)
+    stmt = select(PullRequest).where(PullRequest.repo_id == repo_id)
 
     if filters.state and filters.state.upper() != "ALL":
         if filters.state.upper() == "STALE":
-            query = query.filter(PullRequest.state == "OPEN")
+            stmt = stmt.where(PullRequest.state == "OPEN")
             cutoff = datetime.utcnow() - timedelta(days=30)
-            query = query.filter(PullRequest.created_at < cutoff)
+            stmt = stmt.where(PullRequest.created_at < cutoff)
         else:
-            query = query.filter(PullRequest.state == filters.state.upper())
+            stmt = stmt.where(PullRequest.state == filters.state.upper())
             
     if filters.author and filters.author.lower() != "all":
-        query = query.filter(PullRequest.author == filters.author)
+        stmt = stmt.where(PullRequest.author == filters.author)
 
     if filters.start_date:
         try:
@@ -49,7 +50,7 @@ def get_filtered_prs_query(
             if len(start_date_str) == 10:
                 start_date_str += "T00:00:00"
             start_dt = datetime.fromisoformat(start_date_str)
-            query = query.filter(PullRequest.created_at >= start_dt)
+            stmt = stmt.where(PullRequest.created_at >= start_dt)
         except Exception:
             pass
 
@@ -59,23 +60,25 @@ def get_filtered_prs_query(
             if len(end_date_str) == 10:
                 end_date_str += "T23:59:59"
             end_dt = datetime.fromisoformat(end_date_str)
-            query = query.filter(PullRequest.created_at <= end_dt)
+            stmt = stmt.where(PullRequest.created_at <= end_dt)
         except Exception:
             pass
 
     if not filters.start_date and not filters.end_date and filters.days and filters.days > 0:
         cutoff = datetime.utcnow() - timedelta(days=filters.days)
-        query = query.filter(PullRequest.created_at >= cutoff)
+        stmt = stmt.where(PullRequest.created_at >= cutoff)
 
-    return query
+    return stmt
 
 
-def get_filtered_prs(
-    db: Session,
+async def get_filtered_prs(
+    db: AsyncSession,
     repo_id: int,
     filters: Optional[PRFilterParams] = None,
 ) -> List[PullRequest]:
-    return get_filtered_prs_query(db, repo_id, filters).all()
+    stmt = get_filtered_prs_query(repo_id, filters)
+    result = await db.execute(stmt)
+    return result.scalars().all()
 
 
 def pr_cycle_hours(pr: PullRequest) -> Optional[float]:
@@ -103,13 +106,11 @@ def format_duration(hours: Optional[float]) -> dict:
     if days == int(days):
         days = int(days)
     return {"value": days, "unit": "days", "raw_hours": hours}
-
-
-def list_authors(db: Session, repo_id: int) -> List[str]:
-    rows = (
-        db.query(PullRequest.author)
-        .filter(PullRequest.repo_id == repo_id, PullRequest.author.isnot(None))
-        .distinct()
-        .all()
-    )
+async def list_authors(db: AsyncSession, repo_id: int) -> List[str]:
+    stmt = select(PullRequest.author).where(
+        PullRequest.repo_id == repo_id, 
+        PullRequest.author.isnot(None)
+    ).distinct()
+    result = await db.execute(stmt)
+    rows = result.all()
     return sorted({r[0] for r in rows if r[0]})

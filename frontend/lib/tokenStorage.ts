@@ -22,12 +22,6 @@ export async function saveGithubToken(token: string): Promise<void> {
     } catch {
       // Ignore errors for now
     }
-<<<<<<< HEAD
   }, 500);
-=======
-  } catch {
-
-  }
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
 }
 

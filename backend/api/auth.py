@@ -18,8 +18,8 @@ from config import (
 
 # Algorithm configuration
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Short-lived access tokens (30 minutes)
-REFRESH_TOKEN_EXPIRE_DAYS = 7     # Longer-lived refresh tokens (7 days)
+ACCESS_TOKEN_EXPIRE_MINUTES = 30  
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # ── Password Validation Function ──
 def validate_password_strength(password: str) -> tuple[bool, str]:
@@ -42,7 +42,7 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     if PASSWORD_REQUIRE_DIGITS and not re.search(r"\d", password):
         return False, "Password must contain at least one digit (0-9)"
     
-    if PASSWORD_REQUIRE_SPECIAL and not re.search(r"[!@#$%^&*()_+\-=\[\]{};':"\\,.<>?/]", password):
+    if PASSWORD_REQUIRE_SPECIAL and not re.search(r'[!@#$%^&*()_+\-=\[\]{};\':"\\,.<>?/]', password):
         return False, (
             "Password must contain at least one special character "
             "(!@#$%^&*()_+-=[]{};':,.<>?/)"
@@ -50,8 +50,6 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     
     return True, ""
 
-
-# Pydantic schemas for auth
 class UserSignup(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr

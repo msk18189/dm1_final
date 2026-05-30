@@ -1,29 +1,12 @@
-"""FastAPI dependency injection for authentication and authorization.
-
-Provides:
-- get_current_user: decode JWT → return User or 401
-- get_current_user_optional: return User or None (public endpoints)
-- require_repo_access: validate user can access a given repo
-"""
 from typing import Optional
-<<<<<<< HEAD
 from fastapi import Depends, HTTPException, Header, Request
-from sqlalchemy.orm import Session
-=======
-from fastapi import Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
-
 from database.database import get_db
 from database.models import User, UserRepository, Repository
 from api.auth import decode_access_token
 
-<<<<<<< HEAD
-def _extract_user(request: Request, authorization: Optional[str], db: Session) -> Optional[User]:
-=======
-async def _extract_user(authorization: Optional[str], db: AsyncSession) -> Optional[User]:
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
+async def _extract_user(request: Request, authorization: Optional[str], db: AsyncSession) -> Optional[User]:
     """Decode bearer token and return User object, or None."""
     token = request.cookies.get("accessToken")
     
@@ -45,41 +28,25 @@ async def _extract_user(authorization: Optional[str], db: AsyncSession) -> Optio
     return result.scalar_one_or_none()
 
 
-<<<<<<< HEAD
-def get_current_user(
-    request: Request,
-=======
 async def get_current_user(
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Require authenticated user — raises 401 if not valid."""
-<<<<<<< HEAD
-    user = _extract_user(request, authorization, db)
-=======
-    user = await _extract_user(authorization, db)
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
+    user = await _extract_user(request, authorization, db)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
 
-<<<<<<< HEAD
-def get_current_user_optional(
-    request: Request,
-=======
 async def get_current_user_optional(
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[User]:
     """Return authenticated user or None — for endpoints that work both ways."""
-<<<<<<< HEAD
-    return _extract_user(request, authorization, db)
-=======
-    return await _extract_user(authorization, db)
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041
+    return await _extract_user(request, authorization, db)
 
 
 async def require_repo_access(
@@ -115,10 +82,13 @@ async def require_repo_access(
             detail="Authentication required to access private repositories",
         )
 
-    assoc = db.query(UserRepository).filter(
-        UserRepository.user_id == user.id,
-        UserRepository.repo_id == repo.id,
-    ).first()
+    assoc_result = await db.execute(
+        select(UserRepository).where(
+            (UserRepository.user_id == user.id) &
+            (UserRepository.repo_id == repo.id)
+        )
+    )
+    assoc = assoc_result.scalar_one_or_none()
 
     if not assoc:
         raise HTTPException(

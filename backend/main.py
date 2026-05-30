@@ -1,13 +1,18 @@
 import os
 import sys
 import asyncio
+from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.requests import Request as StarletteRequest
+from api.rate_limiter import limiter
 from api.routes import router
 from database.database import init_db
 from config import CORS_ORIGINS, API_HOST, API_PORT, API_RELOAD, API_WORKERS
@@ -22,6 +27,30 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(
         asyncio.WindowsProactorEventLoopPolicy()
     )
+
+# Apply rate limiter to app state
+app.state.limiter = limiter
+
+# Rate limit exception handler
+@app.exception_handler(RateLimitExceeded)
+async def _custom_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again later."}
+    )
+
+class CustomSlowAPIMiddleware(SlowAPIMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next) -> Response:
+        response = await super().dispatch(request, call_next)
+        if response.status_code == 429:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please try again later."}
+            )
+        return response
+
+# SlowAPI middleware for rate limiting (global limit)
+app.add_middleware(CustomSlowAPIMiddleware)
 
 # CORS middleware
 app.add_middleware(

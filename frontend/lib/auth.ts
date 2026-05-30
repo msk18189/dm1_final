@@ -42,9 +42,4 @@ export async function signOut(): Promise<void> {
   } catch (err) {
     console.error('Failed to clear session', err)
   }
-<<<<<<< HEAD
 }
-
-=======
-}
->>>>>>> ebd3b1d191540a57d1bba0df0b233989f7145041

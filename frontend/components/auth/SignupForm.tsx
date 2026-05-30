@@ -8,7 +8,7 @@ import { saveAuthToken } from '@/lib/auth'
 import Input from '../ui/Input'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
-import { AlertCircle, Lock, Mail, User } from 'lucide-react'
+import { AlertCircle, Lock, Mail, User, Eye, EyeOff } from 'lucide-react'
 
 export default function SignupForm() {
   const router = useRouter()
@@ -16,6 +16,8 @@ export default function SignupForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -97,30 +99,46 @@ export default function SignupForm() {
         <div className="relative">
           <Input
             label="Password"
-            type="password"
+            type={showPassword ? "text" : "password"}
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
             required
-            className="pl-10"
+            className="pl-10 pr-10"
           />
           <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-3.5 top-[38px] text-muted hover:text-primary transition-colors flex items-center justify-center cursor-pointer"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
         </div>
 
         <div className="relative">
           <Input
             label="Confirm Password"
-            type="password"
+            type={showConfirmPassword ? "text" : "password"}
             placeholder="Confirm Password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             disabled={loading}
             required
             error={confirmPassword && !passwordsMatch ? "Passwords do not match" : undefined}
-            className="pl-10"
+            className="pl-10 pr-10"
           />
           <Lock className="absolute left-3.5 top-[38px] h-4 w-4 text-muted pointer-events-none" />
+          <button
+            type="button"
+            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+            className="absolute right-3.5 top-[38px] text-muted hover:text-primary transition-colors flex items-center justify-center cursor-pointer"
+            aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+          >
+            {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
         </div>
 
         <Button type="submit" loading={loading} disabled={!canSubmit} className="w-full mt-6">

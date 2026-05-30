@@ -1,4 +1,5 @@
 import os
+import multiprocessing
 
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 GITHUB_REST_URL = "https://api.github.com"
@@ -30,7 +31,16 @@ if _api_reload_raw not in ("true", "false"):
     )
 API_RELOAD: bool = _api_reload_raw == "true"
 
-_api_workers_raw = os.getenv("API_WORKERS", "1").strip()
+try:
+    _cpu_cores = multiprocessing.cpu_count()
+    _default_workers = _cpu_cores * 2 + 1
+except Exception:
+    _default_workers = 4
+
+if API_RELOAD:
+    _default_workers = 1
+
+_api_workers_raw = os.getenv("API_WORKERS", str(_default_workers)).strip()
 try:
     _api_workers_int = int(_api_workers_raw)
 except ValueError:
@@ -101,10 +111,6 @@ if PASSWORD_MIN_LENGTH < 12:
         f"Consider increasing to 12+ for production environments."
     )
 
-# ── CORS Configuration — ENVIRONMENT-DRIVEN ──
-# Comma-separated list of allowed origins. No hardcoded domains.
-# Example: CORS_ORIGINS=http://localhost:3000,https://prism.company.com
-
 _cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
 
 CORS_ORIGINS = [
@@ -125,3 +131,21 @@ for _origin in CORS_ORIGINS:
             f"[FATAL] Invalid CORS origin: '{_origin}'. "
             "Each origin must start with http:// or https://."
         )
+
+LOGIN_RATE_LIMIT = os.getenv("LOGIN_RATE_LIMIT", "5/minute")
+SIGNUP_RATE_LIMIT = os.getenv("SIGNUP_RATE_LIMIT", "3/minute")
+VERIFY_RATE_LIMIT = os.getenv("VERIFY_RATE_LIMIT", "20/minute")
+ANALYZE_RATE_LIMIT = os.getenv("ANALYZE_RATE_LIMIT", "10/minute")
+API_RATE_LIMIT = os.getenv("API_RATE_LIMIT", "60/minute")
+
+_rate_limits = {
+    "LOGIN_RATE_LIMIT": LOGIN_RATE_LIMIT,
+    "SIGNUP_RATE_LIMIT": SIGNUP_RATE_LIMIT,
+    "VERIFY_RATE_LIMIT": VERIFY_RATE_LIMIT,
+    "ANALYZE_RATE_LIMIT": ANALYZE_RATE_LIMIT,
+    "API_RATE_LIMIT": API_RATE_LIMIT
+}
+
+for _key, _val in _rate_limits.items():
+    if not _val or not _val.strip():
+        raise RuntimeError(f"[FATAL] {_key} cannot be empty. Configure it properly (e.g., '60/minute').")

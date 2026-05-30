@@ -8,18 +8,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import json
 
-from sqlalchemy import func, case, and_, desc, asc
-from sqlalchemy.orm import Session
+from sqlalchemy import func, case, and_, desc, asc, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import (
     Repository, PullRequest, PRReview, Issue, Branch, Fork,
     Workflow, WorkflowRun, Discussion, Project, AnalyticsSnapshot
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _now_utc():
     return datetime.now(timezone.utc)
@@ -29,37 +24,44 @@ def _cutoff(days: int) -> datetime:
     return _now_utc() - timedelta(days=days)
 
 
-# ---------------------------------------------------------------------------
-# MODULE 2 — Issue Analytics
-# ---------------------------------------------------------------------------
-
 class IssueAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(Issue).filter(Issue.repo_id == repo_id)
-        total = base.count()
-        open_count = base.filter(Issue.state == "open").count()
-        closed_count = base.filter(Issue.state == "closed").count()
-        bug_count = base.filter(Issue.is_bug == True).count()
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(Issue).where(Issue.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Issue.state == "open").subquery()))
+        open_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Issue.state == "closed").subquery()))
+        closed_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Issue.is_bug == True).subquery()))
+        bug_count = result.scalar() or 0
 
         stale_cutoff = _cutoff(30)
-        stale_count = base.filter(
+        result = await self.db.execute(select(func.count()).select_from(base.where(
             Issue.state == "open",
             Issue.created_at < stale_cutoff
-        ).count()
+        ).subquery()))
+        stale_count = result.scalar() or 0
 
-        avg_resolution = float(self.db.query(
-            func.avg(Issue.resolution_hours)
-        ).filter(
-            Issue.repo_id == repo_id,
-            Issue.resolution_hours.isnot(None),
-            Issue.resolution_hours > 0
-        ).scalar() or 0.0)
+        result = await self.db.execute(
+            select(func.avg(Issue.resolution_hours)).where(
+                Issue.repo_id == repo_id,
+                Issue.resolution_hours.isnot(None),
+                Issue.resolution_hours > 0
+            )
+        )
+        avg_resolution = float(result.scalar() or 0.0)
 
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
 
         return {
             "total_issues": total,
@@ -80,19 +82,20 @@ class IssueAnalytics:
             "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
-    def get_issues_list(self, repo_id: int, state: str = "all", page: int = 1,
+    async def get_issues_list(self, repo_id: int, state: str = "all", page: int = 1,
                         limit: int = 20, label: str = None,
                         search: str = None, sort: str = "created_at", sort_dir: str = "desc") -> Dict[str, Any]:
-        query = self.db.query(Issue).filter(Issue.repo_id == repo_id)
+        query = select(Issue).where(Issue.repo_id == repo_id)
         if state != "all":
-            query = query.filter(Issue.state == state)
+            query = query.where(Issue.state == state)
         if label:
-            query = query.filter(Issue.labels.contains(label))
+            query = query.where(Issue.labels.contains(label))
         if search:
             search_term = f"%{search}%"
-            query = query.filter(Issue.title.ilike(search_term))
+            query = query.where(Issue.title.ilike(search_term))
 
-        total = query.count()
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
 
         sort_col = getattr(Issue, sort, Issue.created_at)
         if sort_dir == "desc":
@@ -100,7 +103,8 @@ class IssueAnalytics:
         else:
             query = query.order_by(asc(sort_col), asc(Issue.id))
 
-        issues = query.offset((page - 1) * limit).limit(limit).all()
+        result = await self.db.execute(query.offset((page - 1) * limit).limit(limit))
+        issues = result.scalars().all()
 
         now = _now_utc()
         data = []
@@ -138,13 +142,14 @@ class IssueAnalytics:
             "pages": max(1, (total + limit - 1) // limit),
         }
 
-    def get_resolution_velocity(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
+    async def get_resolution_velocity(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
         """Monthly issue opened vs closed trend."""
         cutoff = _cutoff(months * 31)
-        issues = self.db.query(Issue).filter(
+        result = await self.db.execute(select(Issue).where(
             Issue.repo_id == repo_id,
             Issue.created_at >= cutoff
-        ).all()
+        ))
+        issues = result.scalars().all()
 
         from collections import defaultdict
         opened: Dict[str, int] = defaultdict(int)
@@ -161,17 +166,17 @@ class IssueAnalytics:
         keys = sorted(set(list(opened.keys()) + list(closed.keys())))
         return [{"month": k, "opened": opened[k], "closed": closed[k]} for k in keys]
 
-    def get_stale_issues(self, repo_id: int, stale_days: int = 30, page: int = 1, limit: int = 20,
+    async def get_stale_issues(self, repo_id: int, stale_days: int = 30, page: int = 1, limit: int = 20,
                          search: str = None, sort: str = "created_at", sort_dir: str = "asc") -> Dict[str, Any]:
         cutoff = _cutoff(stale_days)
-        query = self.db.query(Issue).filter(
+        query = select(Issue).where(
             Issue.repo_id == repo_id,
             Issue.state == "open",
             Issue.created_at < cutoff
         )
         if search:
             search_term = f"%{search}%"
-            query = query.filter(Issue.title.ilike(search_term))
+            query = query.where(Issue.title.ilike(search_term))
             
         sort_col = getattr(Issue, sort, Issue.created_at)
         if sort_dir == "desc":
@@ -179,8 +184,11 @@ class IssueAnalytics:
         else:
             query = query.order_by(asc(sort_col), asc(Issue.id))
 
-        total = query.count()
-        issues = query.offset((page - 1) * limit).limit(limit).all()
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.offset((page - 1) * limit).limit(limit))
+        issues = result.scalars().all()
         now = _now_utc()
         data = []
         for iss in issues:
@@ -197,7 +205,7 @@ class IssueAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
-    def get_heatmap(self, repo_id: int) -> List[int]:
+    async def get_heatmap(self, repo_id: int) -> List[int]:
         now = _now_utc()
         end_date = now
         while end_date.weekday() != 5:
@@ -205,11 +213,12 @@ class IssueAnalytics:
             
         start_date = end_date - timedelta(days=370)
         
-        issues = self.db.query(Issue.created_at).filter(
+        result = await self.db.execute(select(Issue.created_at).where(
             Issue.repo_id == repo_id,
             Issue.created_at >= start_date,
             Issue.created_at <= end_date + timedelta(days=1)
-        ).all()
+        ))
+        issues = result.all()
         
         from collections import defaultdict
         daily_counts = defaultdict(int)
@@ -229,12 +238,13 @@ class IssueAnalytics:
             heatmap.append(level)
         return heatmap
         
-    def get_priority_distribution(self, repo_id: int) -> List[Dict[str, Any]]:
-        query = self.db.query(Issue.labels, Issue.comment_count, Issue.is_bug).filter(
+    async def get_priority_distribution(self, repo_id: int) -> List[Dict[str, Any]]:
+        query = select(Issue.labels, Issue.comment_count, Issue.is_bug).where(
             Issue.repo_id == repo_id,
             Issue.state == "open"
         )
-        issues = query.all()
+        result = await self.db.execute(query)
+        issues = result.all()
 
         counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
         for (labels_json, comment_count, is_bug) in issues:
@@ -266,12 +276,13 @@ class IssueAnalytics:
             {"name": "Low", "value": counts["Low"], "color": "#10b981"},
         ]
 
-    def get_issue_heatmap(self, repo_id: int) -> List[Dict[str, Any]]:
+    async def get_issue_heatmap(self, repo_id: int) -> List[Dict[str, Any]]:
         cutoff = _cutoff(371)
-        issues = self.db.query(Issue.created_at).filter(
+        result = await self.db.execute(select(Issue.created_at).where(
             Issue.repo_id == repo_id, 
             Issue.created_at >= cutoff
-        ).all()
+        ))
+        issues = result.all()
         
         from collections import defaultdict
         daily = defaultdict(int)
@@ -297,21 +308,30 @@ class IssueAnalytics:
 
 class BranchAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(Branch).filter(Branch.repo_id == repo_id)
-        total = base.count()
-        protected_count = base.filter(Branch.protected == True).count()
-        active_count = base.filter(
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(Branch).where(Branch.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Branch.protected == True).subquery()))
+        protected_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(
             Branch.staleness_days != None,
             Branch.staleness_days <= 30
-        ).count()
-        stale_count = base.filter(
+        ).subquery()))
+        active_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(
             Branch.staleness_days != None,
             Branch.staleness_days >= 90
-        ).count()
+        ).subquery()))
+        stale_count = result.scalar() or 0
+        
         inactive_count = total - active_count - stale_count
 
         return {
@@ -322,18 +342,18 @@ class BranchAnalytics:
             "stale_branches": stale_count,        # >= 90 days
         }
 
-    def get_branches_list(self, repo_id: int, page: int = 1, limit: int = 20,
+    async def get_branches_list(self, repo_id: int, page: int = 1, limit: int = 20,
                           filter_type: str = "all") -> Dict[str, Any]:
-        query = self.db.query(Branch).filter(Branch.repo_id == repo_id)
+        query = select(Branch).where(Branch.repo_id == repo_id)
         if filter_type == "stale":
-            query = query.filter(Branch.staleness_days >= 90)
+            query = query.where(Branch.staleness_days >= 90)
         elif filter_type == "protected":
-            query = query.filter(Branch.protected == True)
+            query = query.where(Branch.protected == True)
         elif filter_type == "active":
-            query = query.filter(Branch.staleness_days != None, Branch.staleness_days <= 30)
+            query = query.where(Branch.staleness_days != None, Branch.staleness_days <= 30)
         elif filter_type == "inactive":
             # inactive = not active and not stale: (NULL or > 30) and (< 90 or NULL)
-            query = query.filter(
+            query = query.where(
                 ~(
                     (Branch.staleness_days != None) & (Branch.staleness_days <= 30)
                 ),
@@ -342,8 +362,11 @@ class BranchAnalytics:
                 ),
             )
 
-        total = query.count()
-        branches = query.order_by(desc(Branch.last_commit_at)).offset((page - 1) * limit).limit(limit).all()
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.order_by(desc(Branch.last_commit_at)).offset((page - 1) * limit).limit(limit))
+        branches = result.scalars().all()
 
         data = [{
             "name": b.name,
@@ -381,18 +404,29 @@ def _branch_health(days: Optional[int]) -> str:
 
 class ForkAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(Fork).filter(Fork.repo_id == repo_id)
-        total = base.count()
-        active_count = base.filter(Fork.staleness_days <= 30).count()
-        stale_count = base.filter(Fork.staleness_days > 90).count()
-        starred_forks = base.filter(Fork.stars > 0).count()
-        avg_stars = float(self.db.query(func.avg(Fork.stars)).filter(Fork.repo_id == repo_id).scalar() or 0.0)
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(Fork).where(Fork.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Fork.staleness_days <= 30).subquery()))
+        active_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Fork.staleness_days > 90).subquery()))
+        stale_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Fork.stars > 0).subquery()))
+        starred_forks = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.avg(Fork.stars)).where(Fork.repo_id == repo_id))
+        avg_stars = float(result.scalar() or 0.0)
 
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
 
         return {
             "total_forks": total,
@@ -411,16 +445,19 @@ class ForkAnalytics:
             "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
-    def get_forks_list(self, repo_id: int, page: int = 1, limit: int = 20,
+    async def get_forks_list(self, repo_id: int, page: int = 1, limit: int = 20,
                        filter_type: str = "all") -> Dict[str, Any]:
-        query = self.db.query(Fork).filter(Fork.repo_id == repo_id)
+        query = select(Fork).where(Fork.repo_id == repo_id)
         if filter_type == "active":
-            query = query.filter(Fork.staleness_days <= 30)
+            query = query.where(Fork.staleness_days <= 30)
         elif filter_type == "stale":
-            query = query.filter(Fork.staleness_days > 90)
+            query = query.where(Fork.staleness_days > 90)
 
-        total = query.count()
-        forks = query.order_by(desc(Fork.pushed_at)).offset((page - 1) * limit).limit(limit).all()
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.order_by(desc(Fork.pushed_at)).offset((page - 1) * limit).limit(limit))
+        forks = result.scalars().all()
 
         data = [{
             "full_name": f.full_name,
@@ -436,12 +473,13 @@ class ForkAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
-    def get_growth_trend(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
+    async def get_growth_trend(self, repo_id: int, months: int = 6) -> List[Dict[str, Any]]:
         cutoff = _cutoff(months * 31)
-        forks = self.db.query(Fork).filter(
+        result = await self.db.execute(select(Fork).where(
             Fork.repo_id == repo_id,
             Fork.created_at >= cutoff
-        ).all()
+        ))
+        forks = result.scalars().all()
 
         from collections import defaultdict
         monthly: Dict[str, int] = defaultdict(int)
@@ -458,39 +496,50 @@ class ForkAnalytics:
 
 class CICDAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(WorkflowRun).filter(WorkflowRun.repo_id == repo_id)
-        total_runs = base.count()
-        successful = base.filter(WorkflowRun.conclusion == "success").count()
-        failed = base.filter(WorkflowRun.conclusion == "failure").count()
-        cancelled = base.filter(WorkflowRun.conclusion == "cancelled").count()
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(WorkflowRun).where(WorkflowRun.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total_runs = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(WorkflowRun.conclusion == "success").subquery()))
+        successful = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(WorkflowRun.conclusion == "failure").subquery()))
+        failed = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(WorkflowRun.conclusion == "cancelled").subquery()))
+        cancelled = result.scalar() or 0
 
-        avg_duration = float(self.db.query(
-            func.avg(WorkflowRun.duration_seconds)
-        ).filter(
-            WorkflowRun.repo_id == repo_id,
-            WorkflowRun.duration_seconds.isnot(None),
-            WorkflowRun.conclusion == "success"
-        ).scalar() or 0.0)
+        result = await self.db.execute(
+            select(func.avg(WorkflowRun.duration_seconds)).where(
+                WorkflowRun.repo_id == repo_id,
+                WorkflowRun.duration_seconds.isnot(None),
+                WorkflowRun.conclusion == "success"
+            )
+        )
+        avg_duration = float(result.scalar() or 0.0)
 
         success_rate = round((successful / total_runs * 100) if total_runs else 0, 1)
 
         # Flaky workflow detection: workflows with >20% failure rate
-        workflow_stats = self.db.query(
+        result = await self.db.execute(select(
             WorkflowRun.workflow_id,
             func.count(WorkflowRun.id).label("total"),
             func.sum(case((WorkflowRun.conclusion == "failure", 1), else_=0)).label("failures")
-        ).filter(WorkflowRun.repo_id == repo_id).group_by(WorkflowRun.workflow_id).all()
+        ).where(WorkflowRun.repo_id == repo_id).group_by(WorkflowRun.workflow_id))
+        workflow_stats = result.all()
 
         flaky_workflows = sum(
             1 for ws in workflow_stats
             if ws.total > 5 and (ws.failures / ws.total) > 0.2
         )
 
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
 
         return {
             "total_runs": total_runs,
@@ -511,16 +560,19 @@ class CICDAnalytics:
             "synced_workflows": repo.synced_workflows if repo else 0,
         }
 
-    def get_runs_list(self, repo_id: int, page: int = 1, limit: int = 20,
+    async def get_runs_list(self, repo_id: int, page: int = 1, limit: int = 20,
                       conclusion: str = None, branch: str = None) -> Dict[str, Any]:
-        query = self.db.query(WorkflowRun).filter(WorkflowRun.repo_id == repo_id)
+        query = select(WorkflowRun).where(WorkflowRun.repo_id == repo_id)
         if conclusion:
-            query = query.filter(WorkflowRun.conclusion == conclusion)
+            query = query.where(WorkflowRun.conclusion == conclusion)
         if branch:
-            query = query.filter(WorkflowRun.head_branch == branch)
+            query = query.where(WorkflowRun.head_branch == branch)
 
-        total = query.count()
-        runs = query.order_by(desc(WorkflowRun.created_at)).offset((page - 1) * limit).limit(limit).all()
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.order_by(desc(WorkflowRun.created_at)).offset((page - 1) * limit).limit(limit))
+        runs = result.scalars().all()
 
         data = [{
             "id": r.github_run_id,
@@ -536,14 +588,15 @@ class CICDAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
-    def get_success_trend(self, repo_id: int, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_success_trend(self, repo_id: int, days: int = 30) -> List[Dict[str, Any]]:
         """Daily success/failure trend for the last N days."""
         cutoff = _cutoff(days)
-        runs = self.db.query(WorkflowRun).filter(
+        result = await self.db.execute(select(WorkflowRun).where(
             WorkflowRun.repo_id == repo_id,
             WorkflowRun.created_at >= cutoff,
             WorkflowRun.conclusion.isnot(None)
-        ).all()
+        ))
+        runs = result.scalars().all()
 
         from collections import defaultdict
         daily: Dict[str, Dict[str, int]] = defaultdict(lambda: {"success": 0, "failure": 0, "other": 0})
@@ -559,25 +612,25 @@ class CICDAnalytics:
 
         return [{"date": k, **v} for k, v in sorted(daily.items())]
 
-    def get_workflow_breakdown(self, repo_id: int) -> List[Dict[str, Any]]:
+    async def get_workflow_breakdown(self, repo_id: int) -> List[Dict[str, Any]]:
         """Per-workflow success/failure breakdown."""
-        stats = self.db.query(
+        result = await self.db.execute(select(
             Workflow.name,
             func.count(WorkflowRun.id).label("total"),
             func.sum(case((WorkflowRun.conclusion == "success", 1), else_=0)).label("success"),
             func.sum(case((WorkflowRun.conclusion == "failure", 1), else_=0)).label("failure"),
             func.avg(WorkflowRun.duration_seconds).label("avg_duration"),
         ).join(WorkflowRun, WorkflowRun.workflow_id == Workflow.id, isouter=True)\
-         .filter(Workflow.repo_id == repo_id)\
-         .group_by(Workflow.id, Workflow.name)\
-         .all()
+         .where(Workflow.repo_id == repo_id)\
+         .group_by(Workflow.id, Workflow.name))
+        stats = result.all()
 
-        result = []
+        result_list = []
         for s in stats:
             total = s.total or 0
             success = int(s.success or 0)
             failure = int(s.failure or 0)
-            result.append({
+            result_list.append({
                 "name": s.name,
                 "total_runs": total,
                 "success": success,
@@ -587,7 +640,7 @@ class CICDAnalytics:
                 "is_flaky": total > 5 and failure / total > 0.2 if total else False,
             })
 
-        return sorted(result, key=lambda x: x["total_runs"], reverse=True)
+        return sorted(result_list, key=lambda x: x["total_runs"], reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -596,16 +649,26 @@ class CICDAnalytics:
 
 class DiscussionAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(Discussion).filter(Discussion.repo_id == repo_id)
-        total = base.count()
-        open_count = base.filter(Discussion.state == "OPEN").count()
-        answered_count = base.filter(Discussion.answer_chosen == True).count()
-        avg_comments = float(self.db.query(func.avg(Discussion.comment_count)).filter(Discussion.repo_id == repo_id).scalar() or 0.0)
-        avg_reactions = float(self.db.query(func.avg(Discussion.reaction_count)).filter(Discussion.repo_id == repo_id).scalar() or 0.0)
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(Discussion).where(Discussion.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Discussion.state == "OPEN").subquery()))
+        open_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Discussion.answer_chosen == True).subquery()))
+        answered_count = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.avg(Discussion.comment_count)).where(Discussion.repo_id == repo_id))
+        avg_comments = float(result.scalar() or 0.0)
+        
+        result = await self.db.execute(select(func.avg(Discussion.reaction_count)).where(Discussion.repo_id == repo_id))
+        avg_reactions = float(result.scalar() or 0.0)
 
         return {
             "total_discussions": total,
@@ -616,10 +679,13 @@ class DiscussionAnalytics:
             "avg_reactions": round(avg_reactions, 1),
         }
 
-    def get_discussions_list(self, repo_id: int, page: int = 1, limit: int = 20) -> Dict[str, Any]:
-        query = self.db.query(Discussion).filter(Discussion.repo_id == repo_id)
-        total = query.count()
-        items = query.order_by(desc(Discussion.created_at)).offset((page - 1) * limit).limit(limit).all()
+    async def get_discussions_list(self, repo_id: int, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+        query = select(Discussion).where(Discussion.repo_id == repo_id)
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.order_by(desc(Discussion.created_at)).offset((page - 1) * limit).limit(limit))
+        items = result.scalars().all()
 
         data = [{
             "number": d.discussion_number,
@@ -636,14 +702,15 @@ class DiscussionAnalytics:
 
         return {"data": data, "total": total, "page": page, "limit": limit, "pages": max(1, (total + limit - 1) // limit)}
 
-    def get_activity_timeline(self, repo_id: int) -> Dict[str, Any]:
+    async def get_activity_timeline(self, repo_id: int) -> Dict[str, Any]:
         """Get discussion activity over time (monthly distribution)."""
         from datetime import datetime, timedelta
         
-        discussions = self.db.query(Discussion).filter(
+        result = await self.db.execute(select(Discussion).where(
             Discussion.repo_id == repo_id,
             Discussion.created_at != None
-        ).order_by(Discussion.created_at).all()
+        ).order_by(Discussion.created_at))
+        discussions = result.scalars().all()
         
         if not discussions:
             return {"timeline": []}
@@ -673,23 +740,32 @@ class DiscussionAnalytics:
 
 class ProjectAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_summary(self, repo_id: int) -> Dict[str, Any]:
-        base = self.db.query(Project).filter(Project.repo_id == repo_id)
-        total = base.count()
-        open_count = base.filter(Project.state == "open").count()
+    async def get_summary(self, repo_id: int) -> Dict[str, Any]:
+        base = select(Project).where(Project.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(base.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(select(func.count()).select_from(base.where(Project.state == "open").subquery()))
+        open_count = result.scalar() or 0
+        
         return {
             "total_projects": total,
             "open_projects": open_count,
             "closed_projects": total - open_count,
         }
 
-    def get_projects_list(self, repo_id: int, page: int = 1, limit: int = 10) -> Dict[str, Any]:
-        query = self.db.query(Project).filter(Project.repo_id == repo_id)
-        total = query.count()
-        items = query.order_by(desc(Project.updated_at)).offset((page - 1) * limit).limit(limit).all()
+    async def get_projects_list(self, repo_id: int, page: int = 1, limit: int = 10) -> Dict[str, Any]:
+        query = select(Project).where(Project.repo_id == repo_id)
+        
+        result = await self.db.execute(select(func.count()).select_from(query.subquery()))
+        total = result.scalar() or 0
+        
+        result = await self.db.execute(query.order_by(desc(Project.updated_at)).offset((page - 1) * limit).limit(limit))
+        items = result.scalars().all()
 
         data = [{
             "number": p.number,
@@ -712,23 +788,25 @@ class ProjectAnalytics:
 
 class RepoHealthAnalytics:
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def get_health_score(self, repo_id: int) -> Dict[str, Any]:
+    async def get_health_score(self, repo_id: int) -> Dict[str, Any]:
         """Compute an aggregate repository health score (0-100) across all modules."""
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
+        
         if not repo:
             return {"score": 0, "components": {}}
 
         scores = {}
 
         # PR health (20 pts)
-        total_prs = db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id)
+        total_prs = await db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id)
         if total_prs > 0:
-            open_prs = db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
+            open_prs = await db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id, PullRequest.state == "OPEN")
             stale_cutoff = _cutoff(30)
-            stale_prs = db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id,
+            stale_prs = await db_count_filter(self.db, PullRequest, PullRequest.repo_id == repo_id,
                                          PullRequest.state == "OPEN", PullRequest.created_at < stale_cutoff)
             stale_rate = stale_prs / max(open_prs, 1)
             pr_score = max(0, 20 - int(stale_rate * 20))
@@ -737,12 +815,12 @@ class RepoHealthAnalytics:
         scores["pull_requests"] = pr_score
 
         # CI health (25 pts)
-        total_runs = db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id)
+        total_runs = await db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id)
         if total_runs > 0:
             recent_cutoff = _cutoff(14)
-            recent_runs = db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id,
+            recent_runs = await db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id,
                                            WorkflowRun.created_at >= recent_cutoff)
-            successful = db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id,
+            successful = await db_count_filter(self.db, WorkflowRun, WorkflowRun.repo_id == repo_id,
                                           WorkflowRun.created_at >= recent_cutoff,
                                           WorkflowRun.conclusion == "success")
             success_rate = successful / max(recent_runs, 1)
@@ -752,9 +830,9 @@ class RepoHealthAnalytics:
         scores["ci_cd"] = ci_score
 
         # Branch health (15 pts)
-        total_branches = db_count_filter(self.db, Branch, Branch.repo_id == repo_id)
+        total_branches = await db_count_filter(self.db, Branch, Branch.repo_id == repo_id)
         if total_branches > 0:
-            stale_branches = db_count_filter(self.db, Branch, Branch.repo_id == repo_id, Branch.staleness_days >= 90)
+            stale_branches = await db_count_filter(self.db, Branch, Branch.repo_id == repo_id, Branch.staleness_days >= 90)
             stale_rate = stale_branches / total_branches
             branch_score = max(0, 15 - int(stale_rate * 15))
         else:
@@ -762,11 +840,11 @@ class RepoHealthAnalytics:
         scores["branches"] = branch_score
 
         # Issue health (20 pts)
-        total_issues = db_count_filter(self.db, Issue, Issue.repo_id == repo_id)
+        total_issues = await db_count_filter(self.db, Issue, Issue.repo_id == repo_id)
         if total_issues > 0:
-            stale_issues = db_count_filter(self.db, Issue, Issue.repo_id == repo_id,
+            stale_issues = await db_count_filter(self.db, Issue, Issue.repo_id == repo_id,
                                             Issue.state == "open", Issue.created_at < _cutoff(60))
-            open_issues = db_count_filter(self.db, Issue, Issue.repo_id == repo_id, Issue.state == "open")
+            open_issues = await db_count_filter(self.db, Issue, Issue.repo_id == repo_id, Issue.state == "open")
             stale_rate = stale_issues / max(open_issues, 1)
             issue_score = max(0, 20 - int(stale_rate * 20))
         else:
@@ -774,8 +852,8 @@ class RepoHealthAnalytics:
         scores["issues"] = issue_score
 
         # Community health: discussions + forks (10 pts)
-        has_discussions = db_count_filter(self.db, Discussion, Discussion.repo_id == repo_id) > 0
-        has_forks = db_count_filter(self.db, Fork, Fork.repo_id == repo_id) > 0
+        has_discussions = (await db_count_filter(self.db, Discussion, Discussion.repo_id == repo_id)) > 0
+        has_forks = (await db_count_filter(self.db, Fork, Fork.repo_id == repo_id)) > 0
         community_score = (5 if has_discussions else 0) + (5 if has_forks else 0)
         scores["community"] = community_score
 
@@ -808,11 +886,12 @@ class RepoHealthAnalytics:
         }
 
 
-def db_count_filter(db, model, *conditions):
-    q = db.query(func.count(model.id))
+async def db_count_filter(db: AsyncSession, model, *conditions):
+    q = select(func.count(model.id))
     for cond in conditions:
-        q = q.filter(cond)
-    return q.scalar() or 0
+        q = q.where(cond)
+    result = await db.execute(q)
+    return result.scalar() or 0
 
 
 def _score_grade(score: int) -> str:

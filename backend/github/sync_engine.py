@@ -18,9 +18,10 @@ import time
 import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from database.database import SessionLocal
+from database.database import async_session_maker
 from database.models import Repository
 from config import SYNC_BATCH_SIZE
 from github.client import GitHubRateLimitException

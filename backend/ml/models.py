@@ -8,7 +8,8 @@ from sklearn.cluster import KMeans
 from sklearn.ensemble import GradientBoostingRegressor, IsolationForest, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from config import ML_MODELS_DIR
 from services.filters import ensure_utc
@@ -199,7 +200,7 @@ class MLModels:
         ]
         return all((self.models_dir / name).exists() for name in expected_files)
 
-    def train_from_db(self, db: Session, min_prs: int = 15, min_contributors: int = 3) -> dict:
+    async def train_from_db(self, db: AsyncSession, min_prs: int = 15, min_contributors: int = 3) -> dict:
         """Train or rebuild ML models from repository data in the database."""
         from database.models import Contributor, PullRequest, MLPrediction
 
@@ -209,7 +210,8 @@ class MLModels:
             "summary": []
         }
 
-        prs = db.query(PullRequest).all()
+        result = await db.execute(select(PullRequest))
+        prs = result.scalars().all()
         if len(prs) < min_prs:
             results["summary"].append(
                 f"Not enough PRs to train ML models (found {len(prs)}, need {min_prs})."
@@ -229,12 +231,12 @@ class MLModels:
             if pr.created_at is None:
                 continue
 
-            prediction = (
-                db.query(MLPrediction)
-                .filter(MLPrediction.pr_id == pr.id)
+            prediction_result = await db.execute(
+                select(MLPrediction)
+                .where(MLPrediction.pr_id == pr.id)
                 .order_by(MLPrediction.created_at.desc())
-                .first()
             )
+            prediction = prediction_result.scalars().first()
             if prediction is None:
                 continue
 
@@ -315,7 +317,8 @@ class MLModels:
         else:
             results["summary"].append("Review wait training skipped: not enough training examples.")
 
-        contributors = db.query(Contributor).all()
+        contributors_result = await db.execute(select(Contributor))
+        contributors = contributors_result.scalars().all()
         if len(contributors) >= min_contributors:
             contributor_features = [
                 [

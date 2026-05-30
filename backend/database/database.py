@@ -2,48 +2,16 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import text, inspect
 from sqlalchemy.orm import declarative_base
 import os
-from dotenv import load_dotenv
 from urllib.parse import quote_plus
-
-load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-
     DB_USER = os.getenv("DB_USER", "root")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
     DB_HOST = os.getenv("DB_HOST", "localhost")
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_NAME = os.getenv("DB_NAME", "github_analytics")
-
-    try:
-        import aiomysql
-        import asyncio
-        
-        # For synchronous database creation at startup, we use aiomysql with asyncio
-        async def _create_database():
-            conn = await aiomysql.connect(
-                host=DB_HOST,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                port=int(DB_PORT)
-            )
-            async with conn.cursor() as cursor:
-                await cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-            await conn.ensure_closed()
-            print(f"[DB] Verified/created MySQL database '{DB_NAME}'")
-
-        # Run the async database creation
-        try:
-            asyncio.run(_create_database())
-        except Exception as e:
-            print(f"[DB Warning] Could not create database '{DB_NAME}': {e}")
-
-    except ImportError:
-        print("[DB Warning] aiomysql not available for database creation check")
-    except Exception as e:
-        print(f"[DB Warning] Could not create database '{DB_NAME}': {e}")
 
     encoded_password = quote_plus(DB_PASSWORD)
 
@@ -55,9 +23,13 @@ if not DATABASE_URL:
         SQLALCHEMY_DATABASE_URL = (
             f"mysql+asyncmy://{DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
-
 else:
     SQLALCHEMY_DATABASE_URL = DATABASE_URL
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_USER = os.getenv("DB_USER", "root")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+    DB_PORT = os.getenv("DB_PORT", "3306")
+    DB_NAME = os.getenv("DB_NAME", "github_analytics")
 
 # =========================================================
 # Async Engine Configuration
@@ -72,7 +44,6 @@ engine = create_async_engine(
     pool_recycle=3600,
 )
 
-# Async Session Factory
 async_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -81,23 +52,52 @@ async_session_maker = async_sessionmaker(
     autoflush=False,
 )
 
-
-# =========================================================
-# Declarative Base
-# =========================================================
-
 Base = declarative_base()
 
-# =========================================================
-# Async Database Initialization
-# =========================================================
+async def _create_database_async():
+    """
+    Create MySQL database if it doesn't exist.
+    Called asynchronously during FastAPI startup.
+    Must be awaited in an existing event loop.
+    """
+    try:
+        import aiomysql
+        
+        conn = await aiomysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD or None,
+            port=int(DB_PORT),
+        )
+        
+        try:
+            async with conn.cursor() as cursor:
+                await cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
+                await conn.commit()
+            print(f"[DB] Verified/created MySQL database '{DB_NAME}'")
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        print(f"[DB Warning] Could not verify/create database '{DB_NAME}': {e}")
+
 
 async def init_db():
-    """Initialize database schema (creates tables and runs migrations)."""
+    """
+    Initialize database schema and tables.
+    Called during FastAPI startup event.
+    
+    Flow:
+    1. Create database if needed (via _create_database_async)
+    2. Create all tables (via SQLAlchemy metadata)
+    """
+    # Step 1: Create database (async operation)
+    await _create_database_async()
+    
+    # Step 2: Create tables
     from database import models  
     
     async with engine.begin() as conn:
-        # Create all tables defined in models
         await conn.run_sync(Base.metadata.create_all)
     
     print("[DB] All tables verified/created successfully.")

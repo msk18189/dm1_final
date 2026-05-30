@@ -18,8 +18,8 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 import httpx
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import (
     Repository, PullRequest, PRReview, PRFile, PRCommit,
@@ -36,30 +36,29 @@ from services.module_analytics import (
 
 
 class SystemIntegrityValidator:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def validate_all(self, repo_id: int = None) -> Dict[str, Any]:
+    async def validate_all(self, repo_id: int = None) -> Dict[str, Any]:
         """Run all data integrity checks and return a unified report."""
         print("[Validation] Running full system integrity validation suite...")
         
-        orphans = self.validate_orphan_records()
-        duplicates = self.validate_duplicate_rows()
-        empty_objects = self.validate_empty_synced_objects()
-        repo_mappings = self.validate_repo_mappings()
-        count_consistency = self.validate_counts_consistency(repo_id)
-        failed_syncs = self.validate_failed_syncs()
+        orphans = await self.validate_orphan_records()
+        duplicates = await self.validate_duplicate_rows()
+        empty_objects = await self.validate_empty_synced_objects()
+        repo_mappings = await self.validate_repo_mappings()
+        count_consistency = await self.validate_counts_consistency(repo_id)
+        failed_syncs = await self.validate_failed_syncs()
         
         tri_compare = {}
         if repo_id:
-            tri_compare = self.compare_tri_counts(repo_id)
+            tri_compare = await self.compare_tri_counts(repo_id)
         else:
-            # Run comparison for first repository if none specified
-            first_repo = self.db.query(Repository).first()
+            result = await self.db.execute(select(Repository))
+            first_repo = result.scalars().first()
             if first_repo:
-                tri_compare = self.compare_tri_counts(first_repo.id)
+                tri_compare = await self.compare_tri_counts(first_repo.id)
 
-        # Print validation summary to console
         total_orphans = sum(orphans.values())
         total_duplicates = sum(duplicates.values())
         total_empty = sum(empty_objects.values())
@@ -84,212 +83,168 @@ class SystemIntegrityValidator:
             "tri_counts_comparison": tri_compare
         }
 
-    def validate_orphan_records(self) -> Dict[str, int]:
-        """Detect and count records lacking parents (broken relationship links)."""
+    async def validate_orphan_records(self) -> Dict[str, int]:
         report = {}
         
-        # PR Reviews without PullRequests
-        report["pr_reviews"] = self.db.query(PRReview).filter(
-            ~PRReview.pr_id.in_(self.db.query(PullRequest.id))
-        ).count()
+        def _q(model, col, parent_model, parent_col):
+            return select(func.count(model.id)).where(~col.in_(select(parent_col)))
+
+        res = await self.db.execute(_q(PRReview, PRReview.pr_id, PullRequest, PullRequest.id))
+        report["pr_reviews"] = res.scalar() or 0
         
-        # PR Files without PullRequests
-        report["pr_files"] = self.db.query(PRFile).filter(
-            ~PRFile.pr_id.in_(self.db.query(PullRequest.id))
-        ).count()
+        res = await self.db.execute(_q(PRFile, PRFile.pr_id, PullRequest, PullRequest.id))
+        report["pr_files"] = res.scalar() or 0
         
-        # PR Commits without PullRequests
-        report["pr_commits"] = self.db.query(PRCommit).filter(
-            ~PRCommit.pr_id.in_(self.db.query(PullRequest.id))
-        ).count()
+        res = await self.db.execute(_q(PRCommit, PRCommit.pr_id, PullRequest, PullRequest.id))
+        report["pr_commits"] = res.scalar() or 0
         
-        # Issue Comments without Issues
-        report["issue_comments"] = self.db.query(IssueComment).filter(
-            ~IssueComment.issue_id.in_(self.db.query(Issue.id))
-        ).count()
+        res = await self.db.execute(_q(IssueComment, IssueComment.issue_id, Issue, Issue.id))
+        report["issue_comments"] = res.scalar() or 0
         
-        # Discussion Comments without Discussions
-        report["discussion_comments"] = self.db.query(DiscussionComment).filter(
-            ~DiscussionComment.discussion_id.in_(self.db.query(Discussion.id))
-        ).count()
+        res = await self.db.execute(_q(DiscussionComment, DiscussionComment.discussion_id, Discussion, Discussion.id))
+        report["discussion_comments"] = res.scalar() or 0
         
-        # Project Items without Projects
-        report["project_items"] = self.db.query(ProjectItem).filter(
-            ~ProjectItem.project_id.in_(self.db.query(Project.id))
-        ).count()
+        res = await self.db.execute(_q(ProjectItem, ProjectItem.project_id, Project, Project.id))
+        report["project_items"] = res.scalar() or 0
         
-        # Workflow Runs without Workflows
-        report["workflow_runs"] = self.db.query(WorkflowRun).filter(
-            ~WorkflowRun.workflow_id.in_(self.db.query(Workflow.id))
-        ).count()
+        res = await self.db.execute(_q(WorkflowRun, WorkflowRun.workflow_id, Workflow, Workflow.id))
+        report["workflow_runs"] = res.scalar() or 0
         
-        # Workflow Jobs without Workflow Runs
-        report["workflow_jobs"] = self.db.query(WorkflowJob).filter(
-            ~WorkflowJob.run_id.in_(self.db.query(WorkflowRun.id))
-        ).count()
+        res = await self.db.execute(_q(WorkflowJob, WorkflowJob.run_id, WorkflowRun, WorkflowRun.id))
+        report["workflow_jobs"] = res.scalar() or 0
         
         return report
 
-    def validate_duplicate_rows(self) -> Dict[str, int]:
-        """Identify duplicate records on unique constraints or logic."""
+    async def validate_duplicate_rows(self) -> Dict[str, int]:
         report = {}
         
-        # 1. Repositories with duplicate full_name
-        dup_repos = self.db.query(Repository.full_name).group_by(Repository.full_name).having(func.count(Repository.id) > 1).count()
-        report["repositories"] = dup_repos
+        res = await self.db.execute(select(func.count()).select_from(select(Repository.full_name).group_by(Repository.full_name).having(func.count(Repository.id) > 1).subquery()))
+        report["repositories"] = res.scalar() or 0
         
-        # 2. Pull Requests with duplicate (repo_id, pr_number)
-        dup_prs = self.db.query(PullRequest.repo_id, PullRequest.pr_number).group_by(
-            PullRequest.repo_id, PullRequest.pr_number
-        ).having(func.count(PullRequest.id) > 1).count()
-        report["pull_requests"] = dup_prs
+        res = await self.db.execute(select(func.count()).select_from(select(PullRequest.repo_id, PullRequest.pr_number).group_by(PullRequest.repo_id, PullRequest.pr_number).having(func.count(PullRequest.id) > 1).subquery()))
+        report["pull_requests"] = res.scalar() or 0
         
-        # 3. Issues with duplicate (repo_id, issue_number)
-        dup_issues = self.db.query(Issue.repo_id, Issue.issue_number).group_by(
-            Issue.repo_id, Issue.issue_number
-        ).having(func.count(Issue.id) > 1).count()
-        report["issues"] = dup_issues
+        res = await self.db.execute(select(func.count()).select_from(select(Issue.repo_id, Issue.issue_number).group_by(Issue.repo_id, Issue.issue_number).having(func.count(Issue.id) > 1).subquery()))
+        report["issues"] = res.scalar() or 0
         
-        # 4. Branches with duplicate (repo_id, name)
-        dup_branches = self.db.query(Branch.repo_id, Branch.name).group_by(
-            Branch.repo_id, Branch.name
-        ).having(func.count(Branch.id) > 1).count()
-        report["branches"] = dup_branches
+        res = await self.db.execute(select(func.count()).select_from(select(Branch.repo_id, Branch.name).group_by(Branch.repo_id, Branch.name).having(func.count(Branch.id) > 1).subquery()))
+        report["branches"] = res.scalar() or 0
         
-        # 5. Forks with duplicate (repo_id, github_id)
-        dup_forks = self.db.query(Fork.repo_id, Fork.github_id).group_by(
-            Fork.repo_id, Fork.github_id
-        ).having(func.count(Fork.id) > 1).count()
-        report["forks"] = dup_forks
+        res = await self.db.execute(select(func.count()).select_from(select(Fork.repo_id, Fork.github_id).group_by(Fork.repo_id, Fork.github_id).having(func.count(Fork.id) > 1).subquery()))
+        report["forks"] = res.scalar() or 0
         
-        # 6. Discussions with duplicate (repo_id, discussion_number)
-        dup_discussions = self.db.query(Discussion.repo_id, Discussion.discussion_number).group_by(
-            Discussion.repo_id, Discussion.discussion_number
-        ).having(func.count(Discussion.id) > 1).count()
-        report["discussions"] = dup_discussions
+        res = await self.db.execute(select(func.count()).select_from(select(Discussion.repo_id, Discussion.discussion_number).group_by(Discussion.repo_id, Discussion.discussion_number).having(func.count(Discussion.id) > 1).subquery()))
+        report["discussions"] = res.scalar() or 0
         
-        # 7. Projects with duplicate (repo_id, github_id)
-        dup_projects = self.db.query(Project.repo_id, Project.github_id).group_by(
-            Project.repo_id, Project.github_id
-        ).having(func.count(Project.id) > 1).count()
-        report["projects"] = dup_projects
+        res = await self.db.execute(select(func.count()).select_from(select(Project.repo_id, Project.github_id).group_by(Project.repo_id, Project.github_id).having(func.count(Project.id) > 1).subquery()))
+        report["projects"] = res.scalar() or 0
         
-        # 8. Workflows with duplicate (repo_id, path)
-        dup_workflows = self.db.query(Workflow.repo_id, Workflow.path).group_by(
-            Workflow.repo_id, Workflow.path
-        ).having(func.count(Workflow.id) > 1).count()
-        report["workflows"] = dup_workflows
+        res = await self.db.execute(select(func.count()).select_from(select(Workflow.repo_id, Workflow.path).group_by(Workflow.repo_id, Workflow.path).having(func.count(Workflow.id) > 1).subquery()))
+        report["workflows"] = res.scalar() or 0
         
-        # 9. Workflow Runs with duplicate (repo_id, github_run_id)
-        dup_runs = self.db.query(WorkflowRun.repo_id, WorkflowRun.github_run_id).group_by(
-            WorkflowRun.repo_id, WorkflowRun.github_run_id
-        ).having(func.count(WorkflowRun.id) > 1).count()
-        report["workflow_runs"] = dup_runs
+        res = await self.db.execute(select(func.count()).select_from(select(WorkflowRun.repo_id, WorkflowRun.github_run_id).group_by(WorkflowRun.repo_id, WorkflowRun.github_run_id).having(func.count(WorkflowRun.id) > 1).subquery()))
+        report["workflow_runs"] = res.scalar() or 0
         
         return report
 
-    def validate_empty_synced_objects(self) -> Dict[str, int]:
-        """Detect database objects missing critical details (empty or null values)."""
+    async def validate_empty_synced_objects(self) -> Dict[str, int]:
         report = {}
         
-        report["repositories_empty_name_or_owner"] = self.db.query(Repository).filter(
-            or_(Repository.name == None, Repository.name == "", Repository.owner == None, Repository.owner == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Repository.id)).where(or_(Repository.name == None, Repository.name == "", Repository.owner == None, Repository.owner == "")))
+        report["repositories_empty_name_or_owner"] = res.scalar() or 0
         
-        report["pull_requests_empty_title"] = self.db.query(PullRequest).filter(
-            or_(PullRequest.title == None, PullRequest.title == "")
-        ).count()
+        res = await self.db.execute(select(func.count(PullRequest.id)).where(or_(PullRequest.title == None, PullRequest.title == "")))
+        report["pull_requests_empty_title"] = res.scalar() or 0
         
-        report["issues_empty_title"] = self.db.query(Issue).filter(
-            or_(Issue.title == None, Issue.title == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Issue.id)).where(or_(Issue.title == None, Issue.title == "")))
+        report["issues_empty_title"] = res.scalar() or 0
         
-        report["branches_empty_name"] = self.db.query(Branch).filter(
-            or_(Branch.name == None, Branch.name == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Branch.id)).where(or_(Branch.name == None, Branch.name == "")))
+        report["branches_empty_name"] = res.scalar() or 0
         
-        report["forks_empty_owner_or_name"] = self.db.query(Fork).filter(
-            or_(Fork.owner == None, Fork.owner == "", Fork.name == None, Fork.name == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Fork.id)).where(or_(Fork.owner == None, Fork.owner == "", Fork.name == None, Fork.name == "")))
+        report["forks_empty_owner_or_name"] = res.scalar() or 0
         
-        report["workflows_empty_name_or_path"] = self.db.query(Workflow).filter(
-            or_(Workflow.name == None, Workflow.name == "", Workflow.path == None, Workflow.path == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Workflow.id)).where(or_(Workflow.name == None, Workflow.name == "", Workflow.path == None, Workflow.path == "")))
+        report["workflows_empty_name_or_path"] = res.scalar() or 0
         
-        report["workflow_runs_empty_status"] = self.db.query(WorkflowRun).filter(
-            or_(WorkflowRun.status == None, WorkflowRun.status == "")
-        ).count()
+        res = await self.db.execute(select(func.count(WorkflowRun.id)).where(or_(WorkflowRun.status == None, WorkflowRun.status == "")))
+        report["workflow_runs_empty_status"] = res.scalar() or 0
         
-        report["discussions_empty_title"] = self.db.query(Discussion).filter(
-            or_(Discussion.title == None, Discussion.title == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Discussion.id)).where(or_(Discussion.title == None, Discussion.title == "")))
+        report["discussions_empty_title"] = res.scalar() or 0
         
-        report["projects_empty_name"] = self.db.query(Project).filter(
-            or_(Project.name == None, Project.name == "")
-        ).count()
+        res = await self.db.execute(select(func.count(Project.id)).where(or_(Project.name == None, Project.name == "")))
+        report["projects_empty_name"] = res.scalar() or 0
         
         return report
 
-    def validate_repo_mappings(self) -> Dict[str, int]:
-        """Ensure records are mapped to existing repos and owners match."""
+    async def validate_repo_mappings(self) -> Dict[str, int]:
         report = {}
-        valid_repo_ids = self.db.query(Repository.id)
+        valid_repo_ids = select(Repository.id)
         
-        # Mappings pointing to non-existent repositories
-        report["orphaned_repo_id_pull_requests"] = self.db.query(PullRequest).filter(~PullRequest.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_issues"] = self.db.query(Issue).filter(~Issue.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_branches"] = self.db.query(Branch).filter(~Branch.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_forks"] = self.db.query(Fork).filter(~Fork.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_discussions"] = self.db.query(Discussion).filter(~Discussion.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_projects"] = self.db.query(Project).filter(~Project.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_workflows"] = self.db.query(Workflow).filter(~Workflow.repo_id.in_(valid_repo_ids)).count()
-        report["orphaned_repo_id_contributors"] = self.db.query(Contributor).filter(~Contributor.repo_id.in_(valid_repo_ids)).count()
+        def _q(model):
+            return select(func.count(model.id)).where(~model.repo_id.in_(valid_repo_ids))
 
-        # Inconsistent repo_owner or repo_name mapping
-        report["inconsistent_owner_or_name_pull_requests"] = self.db.query(PullRequest).join(
-            Repository, PullRequest.repo_id == Repository.id
-        ).filter(
-            or_(PullRequest.repo_owner != Repository.owner, PullRequest.repo_name != Repository.name)
-        ).count()
-        
-        report["inconsistent_owner_or_name_issues"] = self.db.query(Issue).join(
-            Repository, Issue.repo_id == Repository.id
-        ).filter(
-            or_(Issue.repo_owner != Repository.owner, Issue.repo_name != Repository.name)
-        ).count()
+        res = await self.db.execute(_q(PullRequest))
+        report["orphaned_repo_id_pull_requests"] = res.scalar() or 0
+        res = await self.db.execute(_q(Issue))
+        report["orphaned_repo_id_issues"] = res.scalar() or 0
+        res = await self.db.execute(_q(Branch))
+        report["orphaned_repo_id_branches"] = res.scalar() or 0
+        res = await self.db.execute(_q(Fork))
+        report["orphaned_repo_id_forks"] = res.scalar() or 0
+        res = await self.db.execute(_q(Discussion))
+        report["orphaned_repo_id_discussions"] = res.scalar() or 0
+        res = await self.db.execute(_q(Project))
+        report["orphaned_repo_id_projects"] = res.scalar() or 0
+        res = await self.db.execute(_q(Workflow))
+        report["orphaned_repo_id_workflows"] = res.scalar() or 0
+        res = await self.db.execute(_q(Contributor))
+        report["orphaned_repo_id_contributors"] = res.scalar() or 0
 
-        report["inconsistent_owner_or_name_branches"] = self.db.query(Branch).join(
-            Repository, Branch.repo_id == Repository.id
-        ).filter(
-            or_(Branch.repo_owner != Repository.owner, Branch.repo_name != Repository.name)
-        ).count()
+        def _q_join(model):
+            return select(func.count(model.id)).join(Repository, model.repo_id == Repository.id).where(
+                or_(model.repo_owner != Repository.owner, model.repo_name != Repository.name)
+            )
 
-        report["inconsistent_owner_or_name_discussions"] = self.db.query(Discussion).join(
-            Repository, Discussion.repo_id == Repository.id
-        ).filter(
-            or_(Discussion.repo_owner != Repository.owner, Discussion.repo_name != Repository.name)
-        ).count()
+        res = await self.db.execute(_q_join(PullRequest))
+        report["inconsistent_owner_or_name_pull_requests"] = res.scalar() or 0
+        res = await self.db.execute(_q_join(Issue))
+        report["inconsistent_owner_or_name_issues"] = res.scalar() or 0
+        res = await self.db.execute(_q_join(Branch))
+        report["inconsistent_owner_or_name_branches"] = res.scalar() or 0
+        res = await self.db.execute(_q_join(Discussion))
+        report["inconsistent_owner_or_name_discussions"] = res.scalar() or 0
 
         return report
 
-    def validate_counts_consistency(self, specific_repo_id: int = None) -> List[Dict[str, Any]]:
-        """Verify Repository pre-computed summary totals match actual DB row counts."""
-        repos_query = self.db.query(Repository)
+    async def validate_counts_consistency(self, specific_repo_id: int = None) -> List[Dict[str, Any]]:
+        repos_query = select(Repository)
         if specific_repo_id:
-            repos_query = repos_query.filter(Repository.id == specific_repo_id)
+            repos_query = repos_query.where(Repository.id == specific_repo_id)
             
-        repos = repos_query.all()
+        result = await self.db.execute(repos_query)
+        repos = result.scalars().all()
         discrepancies = []
         
         for r in repos:
-            actual_prs = self.db.query(PullRequest).filter(PullRequest.repo_id == r.id).count()
-            actual_issues = self.db.query(Issue).filter(Issue.repo_id == r.id).count()
-            actual_branches = self.db.query(Branch).filter(Branch.repo_id == r.id).count()
-            actual_forks = self.db.query(Fork).filter(Fork.repo_id == r.id).count()
-            actual_workflows = self.db.query(Workflow).filter(Workflow.repo_id == r.id).count()
-            actual_runs = self.db.query(WorkflowRun).filter(WorkflowRun.repo_id == r.id).count()
-            actual_discussions = self.db.query(Discussion).filter(Discussion.repo_id == r.id).count()
-            actual_projects = self.db.query(Project).filter(Project.repo_id == r.id).count()
+            res = await self.db.execute(select(func.count(PullRequest.id)).where(PullRequest.repo_id == r.id))
+            actual_prs = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Issue.id)).where(Issue.repo_id == r.id))
+            actual_issues = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Branch.id)).where(Branch.repo_id == r.id))
+            actual_branches = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Fork.id)).where(Fork.repo_id == r.id))
+            actual_forks = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Workflow.id)).where(Workflow.repo_id == r.id))
+            actual_workflows = res.scalar() or 0
+            res = await self.db.execute(select(func.count(WorkflowRun.id)).where(WorkflowRun.repo_id == r.id))
+            actual_runs = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Discussion.id)).where(Discussion.repo_id == r.id))
+            actual_discussions = res.scalar() or 0
+            res = await self.db.execute(select(func.count(Project.id)).where(Project.repo_id == r.id))
+            actual_projects = res.scalar() or 0
             
             repo_total_projects = getattr(r, "total_projects", 0) or 0
             
@@ -318,13 +273,12 @@ class SystemIntegrityValidator:
                 
         return discrepancies
 
-    def compare_tri_counts(self, repo_id: int) -> Dict[str, Any]:
-        """Compare GitHub counts (metadata columns) vs Dashboard counts vs actual DB row counts."""
-        repo = self.db.query(Repository).filter(Repository.id == repo_id).first()
+    async def compare_tri_counts(self, repo_id: int) -> Dict[str, Any]:
+        result = await self.db.execute(select(Repository).where(Repository.id == repo_id))
+        repo = result.scalar_one_or_none()
         if not repo:
             return {}
 
-        # 1. GitHub Metadata Counts (synced during ingestion features probe)
         gh_counts = {
             "pull_requests": repo.total_prs or 0,
             "issues": repo.total_issues or 0,
@@ -335,57 +289,59 @@ class SystemIntegrityValidator:
             "projects": getattr(repo, "total_projects", 0) or 0
         }
 
-        # 2. Actual Row Counts in DB
+        async def _count(model):
+            res = await self.db.execute(select(func.count(model.id)).where(model.repo_id == repo_id))
+            return res.scalar() or 0
+
         db_counts = {
-            "pull_requests": self.db.query(PullRequest).filter(PullRequest.repo_id == repo_id).count(),
-            "issues": self.db.query(Issue).filter(Issue.repo_id == repo_id).count(),
-            "branches": self.db.query(Branch).filter(Branch.repo_id == repo_id).count(),
-            "forks": self.db.query(Fork).filter(Fork.repo_id == repo_id).count(),
-            "workflow_runs": self.db.query(WorkflowRun).filter(WorkflowRun.repo_id == repo_id).count(),
-            "discussions": self.db.query(Discussion).filter(Discussion.repo_id == repo_id).count(),
-            "projects": self.db.query(Project).filter(Project.repo_id == repo_id).count()
+            "pull_requests": await _count(PullRequest),
+            "issues": await _count(Issue),
+            "branches": await _count(Branch),
+            "forks": await _count(Fork),
+            "workflow_runs": await _count(WorkflowRun),
+            "discussions": await _count(Discussion),
+            "projects": await _count(Project)
         }
 
-        # 3. Dashboard API Returned Counts (via Analytics Services)
         dash_counts = {}
         try:
-            kpi = ExtendedAnalytics(self.db).get_kpi_with_duration(repo_id)
+            kpi = await ExtendedAnalytics(self.db).get_kpi_with_duration(repo_id)
             dash_counts["pull_requests"] = kpi.get("total_prs", 0)
         except Exception:
             dash_counts["pull_requests"] = 0
 
         try:
-            iss_summary = IssueAnalytics(self.db).get_summary(repo_id)
+            iss_summary = await IssueAnalytics(self.db).get_summary(repo_id)
             dash_counts["issues"] = iss_summary.get("total_issues", 0)
         except Exception:
             dash_counts["issues"] = 0
 
         try:
-            br_summary = BranchAnalytics(self.db).get_summary(repo_id)
+            br_summary = await BranchAnalytics(self.db).get_summary(repo_id)
             dash_counts["branches"] = br_summary.get("total_branches", 0)
         except Exception:
             dash_counts["branches"] = 0
 
         try:
-            fork_summary = ForkAnalytics(self.db).get_summary(repo_id)
+            fork_summary = await ForkAnalytics(self.db).get_summary(repo_id)
             dash_counts["forks"] = fork_summary.get("total_forks", 0)
         except Exception:
             dash_counts["forks"] = 0
 
         try:
-            cicd_summary = CICDAnalytics(self.db).get_summary(repo_id)
+            cicd_summary = await CICDAnalytics(self.db).get_summary(repo_id)
             dash_counts["workflow_runs"] = cicd_summary.get("total_runs", 0)
         except Exception:
             dash_counts["workflow_runs"] = 0
 
         try:
-            disc_summary = DiscussionAnalytics(self.db).get_summary(repo_id)
+            disc_summary = await DiscussionAnalytics(self.db).get_summary(repo_id)
             dash_counts["discussions"] = disc_summary.get("total_discussions", 0)
         except Exception:
             dash_counts["discussions"] = 0
 
         try:
-            proj_summary = ProjectAnalytics(self.db).get_summary(repo_id)
+            proj_summary = await ProjectAnalytics(self.db).get_summary(repo_id)
             dash_counts["projects"] = proj_summary.get("total_projects", 0)
         except Exception:
             dash_counts["projects"] = 0
@@ -409,11 +365,11 @@ class SystemIntegrityValidator:
             "comparison": comparison
         }
 
-    def validate_failed_syncs(self) -> Dict[str, Any]:
-        """Check for failed sync states and ingestion error records."""
-        failed_repos = self.db.query(Repository).filter(
+    async def validate_failed_syncs(self) -> Dict[str, Any]:
+        result = await self.db.execute(select(Repository).where(
             or_(Repository.sync_status == "FAILED", Repository.error_message.isnot(None), Repository.sync_error.isnot(None))
-        ).all()
+        ))
+        failed_repos = result.scalars().all()
         
         details = []
         for r in failed_repos:
