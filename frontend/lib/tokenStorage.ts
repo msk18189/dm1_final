@@ -19,6 +19,6 @@ export function saveGithubToken(token: string): void {
       sessionStorage.removeItem(STORAGE_KEY)
     }
   } catch {
-    // sessionStorage unavailable
+
   }
 }

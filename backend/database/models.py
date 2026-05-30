@@ -602,6 +602,22 @@ class User(Base):
 
     # Relationships
     repositories = relationship("UserRepository", backref="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", backref="user", cascade="all, delete-orphan")
+
+
+# ---------------------------------------------------------------------------
+# SUPPORT — REFRESH TOKEN STORAGE
+# ---------------------------------------------------------------------------
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_value = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    revoked = Column(Boolean, default=False, index=True)  # For token revocation support
 
 
 # ---------------------------------------------------------------------------

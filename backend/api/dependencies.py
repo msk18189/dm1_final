@@ -7,13 +7,14 @@ Provides:
 """
 from typing import Optional
 from fastapi import Depends, HTTPException, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from database.database import get_db
 from database.models import User, UserRepository, Repository
 from api.auth import decode_access_token
 
-def _extract_user(authorization: Optional[str], db: Session) -> Optional[User]:
+async def _extract_user(authorization: Optional[str], db: AsyncSession) -> Optional[User]:
     """Decode bearer token and return User object, or None."""
     if not authorization:
         return None
@@ -24,33 +25,36 @@ def _extract_user(authorization: Optional[str], db: Session) -> Optional[User]:
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         return None
-    user = db.query(User).filter(User.username == payload["sub"]).first()
-    return user
+    
+    result = await db.execute(
+        select(User).where(User.username == payload["sub"])
+    )
+    return result.scalar_one_or_none()
 
 
-def get_current_user(
+async def get_current_user(
     authorization: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     """Require authenticated user — raises 401 if not valid."""
-    user = _extract_user(authorization, db)
+    user = await _extract_user(authorization, db)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
 
-def get_current_user_optional(
+async def get_current_user_optional(
     authorization: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> Optional[User]:
     """Return authenticated user or None — for endpoints that work both ways."""
-    return _extract_user(authorization, db)
+    return await _extract_user(authorization, db)
 
 
-def require_repo_access(
+async def require_repo_access(
     repo_id: int,
     user: Optional[User],
-    db: Session,
+    db: AsyncSession,
 ) -> Repository:
     """Validate that a user can access the given repository.
 
@@ -60,7 +64,11 @@ def require_repo_access(
 
     Returns the Repository object or raises 403/404.
     """
-    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    result = await db.execute(
+        select(Repository).where(Repository.id == repo_id)
+    )
+    repo = result.scalar_one_or_none()
+    
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
 
